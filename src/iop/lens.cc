@@ -1522,6 +1522,46 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
     return nc;
   }
 
+  else if(img->exif_correction_type == CORRECTION_TYPE_DNG)
+  {
+    for(int i = 0; i < MAXKNOTS; i++)
+    {
+      const float r = (float) i / (float) (MAXKNOTS -1);
+      knots[i] = r;
+
+      if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_DISTORTION)
+      {
+        // Convert the polynomial to a spline by evaluating it at each knot
+        if(cd->dng.planes == 1) // for true monochrome cameras
+        {
+          const float r_cor = cd->dng.cwarp[0][0] + cd->dng.cwarp[0][1] * powf(r, 2.0f) + cd->dng.cwarp[0][2] * powf(r, 4.0f) + cd->dng.cwarp[0][3] * powf(r, 6.0f);
+          cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+        }
+        else
+        {
+          for(int c = 0; c < cd->dng.planes; c++)
+          {
+            const float r_cor = cd->dng.cwarp[c][0] + cd->dng.cwarp[c][1] * powf(r, 2.0f) + cd->dng.cwarp[c][2] * powf(r, 4.0f) + cd->dng.cwarp[c][3] * powf(r, 6.0f);
+            cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+          }
+        }
+      }
+      else if(cor_rgb)
+        cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = scale;
+
+      if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_TCA)
+      {
+          
+      }
+
+      if(vig)
+        vig[i] = 1.0f;
+    }
+
+    return MAXKNOTS;
+  }
+
+
   return 0;
 }
 
