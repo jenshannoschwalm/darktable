@@ -726,7 +726,7 @@ static bool _check_usercrop(Exiv2::ExifData &exifData, dt_image_t *img)
   return FALSE;
 }
 
-static gboolean _check_dng_opcodes(Exiv2::ExifData &exifData, dt_image_t *img)
+static gboolean _check_dng_opcodes2(Exiv2::ExifData &exifData, dt_image_t *img)
 {
   gboolean has_opcodes = FALSE;
   Exiv2::ExifData::const_iterator pos = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.OpcodeList2"));
@@ -742,9 +742,27 @@ static gboolean _check_dng_opcodes(Exiv2::ExifData &exifData, dt_image_t *img)
     has_opcodes = TRUE;
   }
   else
-  {
     dt_vprint(DT_DEBUG_IMAGEIO, "DNG OpcodeList2 tag not found\n");
+  return has_opcodes;
+}
+
+static gboolean _check_dng_opcodes3(Exiv2::ExifData &exifData, dt_image_t *img)
+{
+  gboolean has_opcodes = FALSE;
+  Exiv2::ExifData::const_iterator pos = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.OpcodeList3"));
+  // DNGs without an embedded preview have the opcodes under Exif.Image instead of Exif.SubImage1
+  if(pos == exifData.end())
+    pos = exifData.findKey(Exiv2::ExifKey("Exif.Image.OpcodeList3"));
+  if(pos != exifData.end())
+  {
+    uint8_t *data = (uint8_t *)g_malloc(pos->size());
+    pos->copy(data, Exiv2::invalidByteOrder);
+    dt_dng_opcode_process_opcode_list_3(data, pos->size(), img);
+    g_free(data);
+    has_opcodes = TRUE;
   }
+  else
+    dt_vprint(DT_DEBUG_IMAGEIO, "DNG OpcodeList3 tag not found\n");
   return has_opcodes;
 }
 
@@ -828,7 +846,8 @@ void dt_exif_img_check_additional_tags(dt_image_t *img, const char *filename)
     if(!exifData.empty())
     {
       _check_usercrop(exifData, img);
-      _check_dng_opcodes(exifData, img);
+      _check_dng_opcodes2(exifData, img);
+      _check_dng_opcodes3(exifData, img);
       _check_lens_correction_data(exifData, img);
     }
     return;
@@ -1020,7 +1039,7 @@ static bool _exif_decode_exif_data(dt_image_t *img, Exiv2::ExifData &exifData)
         dt_tag_attach(tagid, img->id, FALSE, FALSE);
       }
 
-    if(_check_dng_opcodes(exifData, img))
+    if((_check_dng_opcodes2(exifData, img)) || (_check_dng_opcodes3(exifData, img)))
     {
       img->flags |= DT_IMAGE_HAS_ADDITIONAL_EXIF_TAGS;
     }
