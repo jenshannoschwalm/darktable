@@ -257,6 +257,8 @@ typedef struct dt_image_t
 
   // to understand this, look at comment for dt_histogram_roi_t
   int32_t width, height, final_width, final_height, p_width, p_height;
+ 
+  // data read via rawspeed
   int32_t crop_x, crop_y, crop_width, crop_height;
   float aspect_ratio;
 
@@ -297,6 +299,11 @@ typedef struct dt_image_t
 
   /* DefaultUserCrop */
   dt_boundingbox_t usercrop;
+ 
+  /* ActiveArea: holds cropping information relative to full sensor data, usefull if the lens correction
+     is meant to be done for full available data
+  */
+  int activearea[4];
 
   /* GainMaps from DNG OpcodeList2 exif tag */
   GList *dng_gain_maps;
