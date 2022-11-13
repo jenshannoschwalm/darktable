@@ -95,6 +95,8 @@ typedef enum
   DT_IMAGE_MONOCHROME_BAYER = 1 << 19,
   // image has a flag set to use the monochrome workflow in the modules supporting it
   DT_IMAGE_MONOCHROME_WORKFLOW = 1 << 20,
+  // image uses active area instead of standard crop from rawspeed in rawprepare
+  DT_IMAGE_RAWPREPARE_ACTIVEAREA = 1 << 21,
 } dt_image_flags_t;
 
 typedef enum dt_image_colorspace_t
