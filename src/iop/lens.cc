@@ -28,6 +28,7 @@ extern "C" {
 #include "common/imagebuf.h"
 #include "common/opencl.h"
 #include "control/control.h"
+#include "common/image_cache.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "develop/imageop_gui.h"
@@ -2975,6 +2976,27 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
   if(w && w != g->methods_selector)
   {
     p->modified = 1;
+  }
+
+  if((w && w == g->methods_selector) || !w)
+  {
+    dt_image_t *img = dt_image_cache_get(darktable.image_cache, self->dev->image_storage.id, 'w');
+    const int oldflags = img->flags;
+    const gboolean activearea = ((p->method == DT_IOP_LENS_METHOD_EMBEDDED_METADATA)
+                        && (img->exif_correction_type == CORRECTION_TYPE_DNG)
+                        && (img->activearea[0] > -1));
+    if(activearea)
+      img->flags |= DT_IMAGE_RAWPREPARE_ACTIVEAREA;
+    else
+      img->flags &= ~DT_IMAGE_RAWPREPARE_ACTIVEAREA;    
+    const gboolean modechanged = (img->flags != oldflags);
+    dt_image_cache_write_release(darktable.image_cache, img, DT_IMAGE_CACHE_RELAXED);
+
+    if(modechanged)
+    {
+      dt_vprint(DT_DEBUG_IMAGEIO, "[lens correction] switch mode to %s\n", activearea ? "active area" : "default crop");
+      dt_dev_reload_image(self->dev, self->dev->image_storage.id);
+    }
   }
 
   _display_errors(self);
