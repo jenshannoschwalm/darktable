@@ -1529,7 +1529,9 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
       const float r = (float) i / (float) (MAXKNOTS -1);
       knots[i] = r;
 
-      if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_DISTORTION)
+      // the dng data also hold coeffs for lateral CA, i could not find a single file having them different from zero
+      // so not taken into account so far.
+      if(cor_rgb && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
       {
         // Convert the polynomial to a spline by evaluating it at each knot
         if(cd->dng.planes == 1) // for true monochrome cameras
@@ -1539,21 +1541,25 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
         }
         else
         {
-          for(int c = 0; c < cd->dng.planes; c++)
+          if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_TCA)
+          {      
+            for(int c = 0; c < cd->dng.planes; c++)
+            {
+              const float r_cor = cd->dng.cwarp[c][0] + cd->dng.cwarp[c][1] * powf(r, 2.0f) + cd->dng.cwarp[c][2] * powf(r, 4.0f) + cd->dng.cwarp[c][3] * powf(r, 6.0f);
+              cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+            }
+          }
+          else // we simulate "just distortion" by using the green channel coeffs for all splines
           {
-            const float r_cor = cd->dng.cwarp[c][0] + cd->dng.cwarp[c][1] * powf(r, 2.0f) + cd->dng.cwarp[c][2] * powf(r, 4.0f) + cd->dng.cwarp[c][3] * powf(r, 6.0f);
-            cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+            const float r_cor = cd->dng.cwarp[1][0] + cd->dng.cwarp[1][1] * powf(r, 2.0f) + cd->dng.cwarp[1][2] * powf(r, 4.0f) + cd->dng.cwarp[1][3] * powf(r, 6.0f);
+            cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
           }
         }
       }
       else if(cor_rgb)
         cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = scale;
 
-      if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_TCA)
-      {
-          
-      }
-
+      // The vignette corrections seems to be used very rarely, i could not yet find a file having it so leave it as a dummy for now
       if(vig)
         vig[i] = 1.0f;
     }
@@ -2957,7 +2963,10 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
 
   } else {
     gtk_stack_set_visible_child_name(GTK_STACK(g->methods), "metadata");
-
+    const dt_image_t *img = &(self->dev->image_storage);
+    const dt_image_correction_data_t *cd = &img->exif_correction_data;
+    const gboolean no_tca = ((img->exif_correction_type == CORRECTION_TYPE_DNG) && (cd->dng.cwarp[0][4] == 0.0f) && (cd->dng.cwarp[0][5] == 0.0f));
+    gtk_widget_set_visible(g->cor_dist_ft, !no_tca);
     gtk_widget_set_sensitive(GTK_WIDGET(g->modflags), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(g->message), TRUE);
   }
