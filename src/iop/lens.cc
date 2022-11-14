@@ -2982,9 +2982,11 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
   {
     dt_image_t *img = dt_image_cache_get(darktable.image_cache, self->dev->image_storage.id, 'w');
     const int oldflags = img->flags;
-    const gboolean activearea = ((p->method == DT_IOP_LENS_METHOD_EMBEDDED_METADATA)
+    gboolean activearea = ((p->method == DT_IOP_LENS_METHOD_EMBEDDED_METADATA)
                         && (img->exif_correction_type == CORRECTION_TYPE_DNG)
                         && (img->activearea[0] > -1));
+
+    activearea = FALSE;
     if(activearea)
       img->flags |= DT_IMAGE_RAWPREPARE_ACTIVEAREA;
     else
