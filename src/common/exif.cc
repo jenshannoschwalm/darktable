@@ -761,7 +761,9 @@ static gboolean _check_dng_opcodes3(Exiv2::ExifData &exifData, dt_image_t *img)
 
     // we also want the active area for a lens scaling calculation
     img->exif_correction_data.dng.activearea[0] = -1;
-    Exiv2::ExifData::const_iterator posa = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.0xc68d"));
+    Exiv2::ExifData::const_iterator posa = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.ActiveArea"));
+    if(posa == exifData.end())
+      posa = exifData.findKey(Exiv2::ExifKey("Exif.Image.ActiveArea"));
     if(posa != exifData.end() && posa->count() == 4 && posa->size())
     {
       for(int i = 0; i < 4; i++)
