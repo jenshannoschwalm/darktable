@@ -95,8 +95,6 @@ typedef enum
   DT_IMAGE_MONOCHROME_BAYER = 1 << 19,
   // image has a flag set to use the monochrome workflow in the modules supporting it
   DT_IMAGE_MONOCHROME_WORKFLOW = 1 << 20,
-  // image uses active area instead of standard crop from rawspeed in rawprepare
-  DT_IMAGE_RAWPREPARE_ACTIVEAREA = 1 << 21,
 } dt_image_flags_t;
 
 typedef enum dt_image_colorspace_t
@@ -167,6 +165,7 @@ typedef union dt_image_correction_data_t
     float centre_warp[2];
     float cvig[5];     // for vignetting
     float centre_vig[2];
+    int activearea[4];
   } dng;
 } dt_image_correction_data_t;
 
@@ -259,8 +258,6 @@ typedef struct dt_image_t
 
   // to understand this, look at comment for dt_histogram_roi_t
   int32_t width, height, final_width, final_height, p_width, p_height;
- 
-  // data read via rawspeed
   int32_t crop_x, crop_y, crop_width, crop_height;
   float aspect_ratio;
 
@@ -301,11 +298,6 @@ typedef struct dt_image_t
 
   /* DefaultUserCrop */
   dt_boundingbox_t usercrop;
- 
-  /* ActiveArea: holds cropping information relative to full sensor data, usefull if the lens correction
-     is meant to be done for full available data
-  */
-  int activearea[4];
 
   /* GainMaps from DNG OpcodeList2 exif tag */
   GList *dng_gain_maps;

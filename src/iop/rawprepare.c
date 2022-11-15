@@ -650,15 +650,6 @@ void commit_params(dt_iop_module_t *self, dt_iop_params_t *params, dt_dev_pixelp
   d->width = p->width;
   d->height = p->height;
 
-  if(piece->pipe->image.flags & DT_IMAGE_RAWPREPARE_ACTIVEAREA)
-  {
-    dt_image_t *img = &piece->pipe->image;
-    d->x = img->activearea[1];
-    d->y = img->activearea[0];
-    d->width = img->width - img->activearea[3] - d->x;
-    d->height = img->height - img->activearea[2] - d->y;
- }
- 
   if(piece->pipe->dsc.filters)
   {
     const float white = (float)p->raw_white_point;

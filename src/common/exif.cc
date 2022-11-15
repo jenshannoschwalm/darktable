@@ -712,14 +712,6 @@ static bool _exif_read_exif_tag(Exiv2::ExifData &exifData, Exiv2::ExifData::cons
 // We only take them if a) we find a value != the default *and* b) data are plausible
 static bool _check_usercrop(Exiv2::ExifData &exifData, dt_image_t *img)
 {
-  // first we check for a dng ActiveArea tag
-  Exiv2::ExifData::const_iterator posa = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.0xc68d"));
-  if(posa != exifData.end() && posa->count() == 4 && posa->size())
-  {
-    for(int i = 0; i < 4; i++)
-      img->activearea[i] = (int) posa->toFloat(i);
-  }
-
   Exiv2::ExifData::const_iterator pos = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.0xc7b5"));
   if(pos != exifData.end() && pos->count() == 4 && pos->size())
   {
@@ -766,6 +758,15 @@ static gboolean _check_dng_opcodes3(Exiv2::ExifData &exifData, dt_image_t *img)
     dt_dng_opcode_process_opcode_list_3(data, pos->size(), img);
     g_free(data);
     has_opcodes = TRUE;
+
+    // we also want the active area for a lens scaling calculation
+    img->exif_correction_data.dng.activearea[0] = -1;
+    Exiv2::ExifData::const_iterator posa = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.0xc68d"));
+    if(posa != exifData.end() && posa->count() == 4 && posa->size())
+    {
+      for(int i = 0; i < 4; i++)
+        img->exif_correction_data.dng.activearea[i] = (int) posa->toFloat(i);
+    }
   }
   return has_opcodes;
 }

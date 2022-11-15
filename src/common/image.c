@@ -1848,7 +1848,6 @@ void dt_image_init(dt_image_t *img)
   img->wb_coeffs[3] = NAN;
   img->usercrop[0] = img->usercrop[1] = 0;
   img->usercrop[2] = img->usercrop[3] = 1;
-  img->activearea[0] = img->activearea[1] = img->activearea[2] = img->activearea[3] = -1;
   img->dng_gain_maps = NULL;
   img->exif_correction_type = CORRECTION_TYPE_NONE;
   img->cache_entry = 0;
