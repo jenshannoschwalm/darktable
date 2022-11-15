@@ -28,7 +28,6 @@ extern "C" {
 #include "common/imagebuf.h"
 #include "common/opencl.h"
 #include "control/control.h"
-#include "common/image_cache.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "develop/imageop_gui.h"
@@ -1568,7 +1567,6 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
     return MAXKNOTS;
   }
 
-
   return 0;
 }
 
@@ -1606,8 +1604,16 @@ static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt
   d->cor_dist_ft = p->cor_dist_ft;
   d->cor_vig_ft = p->cor_vig_ft;
 
+  float global_scale = 1.0f;
+  if((img->exif_correction_type == CORRECTION_TYPE_DNG) && (img->exif_correction_data.dng.activearea[0] >= 0))
+  {
+    const float hor = (float)img->exif_correction_data.dng.activearea[3] / (float) (img->width - img->crop_width - img->crop_x);    
+    const float ver = (float)img->exif_correction_data.dng.activearea[2] / (float) (img->height - img->crop_height - img->crop_y);
+    global_scale = fminf(hor, ver);
+  }  
+
   // calculate auto scale
-  d->scale_md = _get_autoscale_md(self, p);
+  d->scale_md = global_scale * _get_autoscale_md(self, p);
 
   int nc = _init_coeffs_md(img, p, d->scale_md, d->knots, d->cor_rgb, d->vig);
   d->nc = nc;
@@ -2976,29 +2982,6 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
   if(w && w != g->methods_selector)
   {
     p->modified = 1;
-  }
-
-  if((w && w == g->methods_selector) || !w)
-  {
-    dt_image_t *img = dt_image_cache_get(darktable.image_cache, self->dev->image_storage.id, 'w');
-    const int oldflags = img->flags;
-    gboolean activearea = ((p->method == DT_IOP_LENS_METHOD_EMBEDDED_METADATA)
-                        && (img->exif_correction_type == CORRECTION_TYPE_DNG)
-                        && (img->activearea[0] > -1));
-
-    activearea = FALSE;
-    if(activearea)
-      img->flags |= DT_IMAGE_RAWPREPARE_ACTIVEAREA;
-    else
-      img->flags &= ~DT_IMAGE_RAWPREPARE_ACTIVEAREA;    
-    const gboolean modechanged = (img->flags != oldflags);
-    dt_image_cache_write_release(darktable.image_cache, img, DT_IMAGE_CACHE_RELAXED);
-
-    if(modechanged)
-    {
-      dt_vprint(DT_DEBUG_IMAGEIO, "[lens correction] switch mode to %s\n", activearea ? "active area" : "default crop");
-      dt_dev_reload_image(self->dev, self->dev->image_storage.id);
-    }
   }
 
   _display_errors(self);
