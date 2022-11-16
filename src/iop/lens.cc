@@ -1524,37 +1524,27 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
   else if(img->exif_correction_type == CORRECTION_TYPE_DNG)
   {
+    const float k0[3] = { cd->dng.cwarp[0][0], cd->dng.cwarp[1][0], cd->dng.cwarp[2][0] };
+    const float k2[3] = { cd->dng.cwarp[0][1], cd->dng.cwarp[1][1], cd->dng.cwarp[2][1] };
+    const float k4[3] = { cd->dng.cwarp[0][2], cd->dng.cwarp[1][2], cd->dng.cwarp[2][2] };
+    const float k6[3] = { cd->dng.cwarp[0][3], cd->dng.cwarp[1][3], cd->dng.cwarp[2][3] };
+
     for(int i = 0; i < MAXKNOTS; i++)
     {
-      const float r = (float) i / (float) (MAXKNOTS -1);
+      const float r = (float) i / (float) (MAXKNOTS - 1);
       knots[i] = r;
 
-      // the dng data also hold coeffs for lateral CA, i could not find a single file having them different from zero
-      // so not taken into account so far.
       if(cor_rgb && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
       {
+        for(int c = 0; c < cd->dng.planes; c++)
+        {
+          const float r_cor = k0[c] + k2[c]*powf(r, 2.0f) + k4[c]*powf(r, 4.0f) + k6[c]*powf(r, 6.0f);
+          cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+        }
+
         // Convert the polynomial to a spline by evaluating it at each knot
-        if(cd->dng.planes == 1) // for true monochrome cameras
-        {
-          const float r_cor = cd->dng.cwarp[0][0] + cd->dng.cwarp[0][1] * powf(r, 2.0f) + cd->dng.cwarp[0][2] * powf(r, 4.0f) + cd->dng.cwarp[0][3] * powf(r, 6.0f);
-          cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
-        }
-        else
-        {
-          if(cor_rgb && p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_TCA)
-          {      
-            for(int c = 0; c < cd->dng.planes; c++)
-            {
-              const float r_cor = cd->dng.cwarp[c][0] + cd->dng.cwarp[c][1] * powf(r, 2.0f) + cd->dng.cwarp[c][2] * powf(r, 4.0f) + cd->dng.cwarp[c][3] * powf(r, 6.0f);
-              cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
-            }
-          }
-          else // we simulate "just distortion" by using the green channel coeffs for all splines
-          {
-            const float r_cor = cd->dng.cwarp[1][0] + cd->dng.cwarp[1][1] * powf(r, 2.0f) + cd->dng.cwarp[1][2] * powf(r, 4.0f) + cd->dng.cwarp[1][3] * powf(r, 6.0f);
-            cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
-          }
-        }
+        if(cd->dng.planes == 1)
+          cor_rgb[2][i] = cor_rgb[1][i] = cor_rgb[0][i];
       }
       else if(cor_rgb)
         cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = scale;
@@ -1576,15 +1566,14 @@ static float _get_autoscale_md(dt_iop_module_t *self, dt_iop_lens_params_t *p)
 
   float knots[MAXKNOTS], cor_rgb[3][MAXKNOTS];
   // Default the scale to one for the benefit of init_coeffs
-  int nc = _init_coeffs_md(img, p, 1, knots, cor_rgb, NULL);
+  int nc = _init_coeffs_md(img, p, 1.0f, knots, cor_rgb, NULL);
 
   // Compute the new scale
   float scale = 0;
   for(int i = 0; i < 200; i++)
     for(int j = 0; j < 3; j++)
-      scale = MAX(scale, _interpolate_linear_spline(knots, cor_rgb[j], nc, 0.5 + 0.5*i/(200 - 1)));
-
-  return 1 / scale;
+      scale = fmaxf(scale, _interpolate_linear_spline(knots, cor_rgb[j], nc, 0.5f + 0.5f * (float) i / (200.0f - 1.0f)));
+  return 1.0f / scale;
 }
 
 static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt_dev_pixelpipe_t *pipe, dt_dev_pixelpipe_iop_t *piece)
@@ -1604,16 +1593,18 @@ static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt
   d->cor_dist_ft = p->cor_dist_ft;
   d->cor_vig_ft = p->cor_vig_ft;
 
-  float global_scale = 1.0f;
+  float scale_correction = 1.0f;
   if((img->exif_correction_type == CORRECTION_TYPE_DNG) && (img->exif_correction_data.dng.activearea[0] >= 0))
   {
-    const float hor = (float)img->exif_correction_data.dng.activearea[3] / (float) (img->width - img->crop_width - img->crop_x);    
-    const float ver = (float)img->exif_correction_data.dng.activearea[2] / (float) (img->height - img->crop_height - img->crop_y);
-    global_scale = fminf(hor, ver);
+ //   const float hor = (float)img->exif_correction_data.dng.activearea[3] / (float) (img->width - img->crop_width - img->crop_x);    
+ //   const float ver = (float)img->exif_correction_data.dng.activearea[2] / (float) (img->height - img->crop_height - img->crop_y);
+    const float hor = (float)img->width / (float) (img->width - img->crop_width - img->crop_x);    
+    const float ver = (float)img->height / (float) (img->height - img->crop_height - img->crop_y);
+    scale_correction = fminf(hor, ver);
   }  
 
   // calculate auto scale
-  d->scale_md = global_scale * _get_autoscale_md(self, p);
+  d->scale_md = scale_correction * _get_autoscale_md(self, p);
 
   int nc = _init_coeffs_md(img, p, d->scale_md, d->knots, d->cor_rgb, d->vig);
   d->nc = nc;
@@ -2950,7 +2941,8 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
   // enable methods selector combobox only if more than 1 methods are available
   gtk_widget_set_sensitive(g->methods_selector, _have_embedded_metadata(self) > 0);
 
-  if (p->method == DT_IOP_LENS_METHOD_LENSFUN){
+  if(p->method == DT_IOP_LENS_METHOD_LENSFUN)
+  {
     gtk_stack_set_visible_child_name(GTK_STACK(g->methods), "lensfun");
 
     gtk_widget_set_sensitive(GTK_WIDGET(g->modflags), !g->lensfun_trouble);
@@ -2968,12 +2960,10 @@ void gui_changed(dt_iop_module_t *self, GtkWidget *w, void *previous)
     gtk_widget_set_visible(g->tca_r, p->tca_override && !raw_monochrome);
     gtk_widget_set_visible(g->tca_b, p->tca_override && !raw_monochrome);
 
-  } else {
+  }
+  else
+  {
     gtk_stack_set_visible_child_name(GTK_STACK(g->methods), "metadata");
-    const dt_image_t *img = &(self->dev->image_storage);
-    const dt_image_correction_data_t *cd = &img->exif_correction_data;
-    const gboolean no_tca = ((img->exif_correction_type == CORRECTION_TYPE_DNG) && (cd->dng.cwarp[0][4] == 0.0f) && (cd->dng.cwarp[0][5] == 0.0f));
-    gtk_widget_set_visible(g->cor_dist_ft, !no_tca);
     gtk_widget_set_sensitive(GTK_WIDGET(g->modflags), TRUE);
     gtk_widget_set_sensitive(GTK_WIDGET(g->message), TRUE);
   }
