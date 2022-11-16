@@ -160,9 +160,11 @@ typedef union dt_image_correction_data_t
     float knots[9], distortion[9], ca_r[9], ca_b[9], vignetting[9];
   } fuji;
   struct {
+    gboolean has_warp;
     int planes;
     float cwarp[3][6]; // for up to 3 planes warp rectilinear
     float centre_warp[2];
+    gboolean has_vig;
     float cvig[5];     // for vignetting
     float centre_vig[2];
     int activearea[4];
