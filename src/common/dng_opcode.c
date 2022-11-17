@@ -115,6 +115,9 @@ void dt_dng_opcode_process_opcode_list_2(uint8_t *buf, uint32_t buf_size, dt_ima
 void dt_dng_opcode_process_opcode_list_3(uint8_t *buf, uint32_t buf_size, dt_image_t *img)
 {
   dt_image_correction_data_t *cd = &img->exif_correction_data;
+  cd->dng.has_warp = FALSE;
+  cd->dng.has_vignette = FALSE;
+
   uint32_t count = get_long(&buf[0]);
   uint32_t offset = 4;
   while(count > 0)
@@ -150,7 +153,7 @@ void dt_dng_opcode_process_opcode_list_3(uint8_t *buf, uint32_t buf_size, dt_ima
         cd->dng.centre_warp[i] = get_double(&param[4 + 8 * (i + planes * 6)]);
 
       img->exif_correction_type = CORRECTION_TYPE_DNG;
-
+      cd->dng.has_warp = TRUE;
       dt_vprint(DT_DEBUG_IMAGEIO, "[OPCODE_ID_WARP_RECTILINEAR] centre %f %f\n", cd->dng.centre_warp[0], cd->dng.centre_warp[1]); 
       for(int p = 0; p < planes; p++)
         dt_vprint(DT_DEBUG_IMAGEIO, "[OPCODE_ID_WARP_RECTILINEAR] plane %i cwarp: %f %f %f %f %f %f\n",
@@ -160,9 +163,12 @@ void dt_dng_opcode_process_opcode_list_3(uint8_t *buf, uint32_t buf_size, dt_ima
     else if(opcode_id == OPCODE_ID_VIGNETTE_RADIAL)
     {
       for(int i = 0; i < 5; i++)
-        cd->dng.cvig[i] = get_double(&param[4 + 8 * i]);
+        cd->dng.cvig[i] = get_double(&param[8 * i]);
       for(int i = 0; i < 2; i++)
-        cd->dng.centre_vig[i] = get_double(&param[4 + 8 * (5 + i)]);
+        cd->dng.centre_vig[i] = get_double(&param[8 * (5 + i)]);
+
+      cd->dng.has_vignette = TRUE;
+      img->exif_correction_type = CORRECTION_TYPE_DNG;
 
       dt_vprint(DT_DEBUG_IMAGEIO, "[OPCODE_ID_VIGNETTE_RADIAL] centre %f %f, cvig: %f %f %f %f %f\n",
         cd->dng.centre_vig[0], cd->dng.centre_vig[1], cd->dng.cvig[0], cd->dng.cvig[1], cd->dng.cvig[2], cd->dng.cvig[3], cd->dng.cvig[4]);

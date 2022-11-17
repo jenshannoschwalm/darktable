@@ -166,6 +166,8 @@ typedef union dt_image_correction_data_t
     float cvig[5];     // for vignetting
     float centre_vig[2];
     int activearea[4];
+    gboolean has_warp;
+    gboolean has_vignette;
   } dng;
 } dt_image_correction_data_t;
 

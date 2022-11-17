@@ -1534,7 +1534,7 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
       const float r = (float) i / (float) (MAXKNOTS - 1);
       knots[i] = r;
 
-      if(cor_rgb && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
+      if(cor_rgb && cd->dng.has_warp && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
       {
         for(int c = 0; c < cd->dng.planes; c++)
         {
@@ -1549,8 +1549,18 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
       else if(cor_rgb)
         cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = scale;
 
-      // The vignette corrections seems to be used very rarely, i could not yet find a file having it so leave it as a dummy for now
-      if(vig)
+      if(vig && cd->dng.has_vignette && (p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_VIGNETTING))
+      {
+        // Pixel value is to be divided by (1 + dvig) to correct vignetting
+        const float dvig = cd->dng.cvig[0] * powf(r, 2.0f) + cd->dng.cvig[1] * powf(r, 4.0f)
+                           + cd->dng.cvig[2] * powf(r, 6.0f) + cd->dng.cvig[3] * powf(r, 8.0f)
+                           + cd->dng.cvig[4] * powf(r, 10.0f);
+        // Scale dvig according to fine-tune: 0 for no correction, 1 for
+        // correction specified by metadata, and 2 to double the correction.
+        // Store the square root since _process_md will square the value
+        vig[i] = sqrtf(1.0f / (1.0f + p->cor_vig_ft * dvig)); 
+      }
+      else if(vig)
         vig[i] = 1.0f;
     }
 
