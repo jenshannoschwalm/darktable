@@ -1524,6 +1524,22 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
   else if(img->exif_correction_type == CORRECTION_TYPE_DNG)
   {
+    // Assume the center of the crop region is the center of the image.
+    const float cropw = img->width - img->crop_width - img->crop_x;
+    const float croph = img->height - img->crop_height - img->crop_y;
+    const float cenw = img->crop_x + cropw / 2;
+    const float cenh = img->crop_y + croph / 2;
+    // Get distance from center to furthest corner of the ActiveArea
+    const float actw2 = MAX(cenw - img->exif_correction_data.dng.activearea[1],
+                           img->exif_correction_data.dng.activearea[3] - cenw);
+    const float acth2 = MAX(cenh - img->exif_correction_data.dng.activearea[0],
+                           img->exif_correction_data.dng.activearea[2] - cenh);
+    // The DNG opcodes define r = 1 as the distance from the center to the
+    // furthest corner of the ActiveArea, but this module defines r = 1 as the
+    // distance from the center to the corner of the crop region. Adjust the
+    // radius to correct for this difference.
+    const float r_scale = hypot(actw2, acth2) / hypot(cropw / 2, croph / 2);
+
     const float k0[3] = { cd->dng.cwarp[0][0], cd->dng.cwarp[1][0], cd->dng.cwarp[2][0] };
     const float k2[3] = { cd->dng.cwarp[0][1], cd->dng.cwarp[1][1], cd->dng.cwarp[2][1] };
     const float k4[3] = { cd->dng.cwarp[0][2], cd->dng.cwarp[1][2], cd->dng.cwarp[2][2] };
@@ -1531,23 +1547,23 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
     for(int i = 0; i < MAXKNOTS; i++)
     {
-      const float r = (float) i / (float) (MAXKNOTS - 1);
+      const float r = (float) i / (float) (MAXKNOTS - 1) / r_scale;
       knots[i] = r;
 
       if(cor_rgb && cd->dng.has_warp && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
       {
         for(int c = 0; c < cd->dng.planes; c++)
         {
+          // Convert the polynomial to a spline by evaluating it at each knot
           const float r_cor = k0[c] + k2[c]*powf(r, 2.0f) + k4[c]*powf(r, 4.0f) + k6[c]*powf(r, 6.0f);
-          cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f) * scale;
+          cor_rgb[c][i] = (p->cor_dist_ft * (r_cor - 1.0f) + 1.0f);
         }
 
-        // Convert the polynomial to a spline by evaluating it at each knot
         if(cd->dng.planes == 1)
           cor_rgb[2][i] = cor_rgb[1][i] = cor_rgb[0][i];
       }
       else if(cor_rgb)
-        cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = scale;
+        cor_rgb[0][i] = cor_rgb[1][i] = cor_rgb[2][i] = 1;
 
       if(vig && cd->dng.has_vignette && (p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_VIGNETTING))
       {
@@ -1603,18 +1619,8 @@ static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt
   d->cor_dist_ft = p->cor_dist_ft;
   d->cor_vig_ft = p->cor_vig_ft;
 
-  float scale_correction = 1.0f;
-  if((img->exif_correction_type == CORRECTION_TYPE_DNG) && (img->exif_correction_data.dng.activearea[0] >= 0))
-  {
- //   const float hor = (float)img->exif_correction_data.dng.activearea[3] / (float) (img->width - img->crop_width - img->crop_x);    
- //   const float ver = (float)img->exif_correction_data.dng.activearea[2] / (float) (img->height - img->crop_height - img->crop_y);
-    const float hor = (float)img->width / (float) (img->width - img->crop_width - img->crop_x);    
-    const float ver = (float)img->height / (float) (img->height - img->crop_height - img->crop_y);
-    scale_correction = fminf(hor, ver);
-  }  
-
-  // calculate auto scale
-  d->scale_md = scale_correction * _get_autoscale_md(self, p);
+  // Calculate auto scale. This is ignored for DNG distortion.
+  d->scale_md = _get_autoscale_md(self, p);
 
   int nc = _init_coeffs_md(img, p, d->scale_md, d->knots, d->cor_rgb, d->vig);
   d->nc = nc;
