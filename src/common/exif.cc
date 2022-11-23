@@ -769,6 +769,24 @@ static gboolean _check_dng_opcodes3(Exiv2::ExifData &exifData, dt_image_t *img)
       for(int i = 0; i < 4; i++)
         img->exif_correction_data.dng.activearea[i] = (int) posa->toFloat(i);
     }
+    else
+    {
+      // If there is no ActiveArea tag, the entire image is the ActiveArea by default
+      Exiv2::ExifData::const_iterator posl = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.ImageLength"));
+      Exiv2::ExifData::const_iterator posw = exifData.findKey(Exiv2::ExifKey("Exif.SubImage1.ImageWidth"));
+      if(posl == exifData.end() || posw == exifData.end())
+      {
+        posl = exifData.findKey(Exiv2::ExifKey("Exif.Image.ImageLength"));
+        posw = exifData.findKey(Exiv2::ExifKey("Exif.Image.ImageWidth"));
+      }
+      if(posl != exifData.end() && posw != exifData.end())
+      {
+        img->exif_correction_data.dng.activearea[0] = 0;
+        img->exif_correction_data.dng.activearea[1] = 0;
+        img->exif_correction_data.dng.activearea[2] = posl->toLong();
+        img->exif_correction_data.dng.activearea[3] = posw->toLong();
+      }
+    }
   }
   return has_opcodes;
 }

@@ -1533,21 +1533,25 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
   else if(img->exif_correction_type == CORRECTION_TYPE_DNG)
   {
-    // Assume the center of the crop region is the center of the image.
-    const float cropw = img->width - img->crop_width - img->crop_x;
-    const float croph = img->height - img->crop_height - img->crop_y;
-    const float cenw = img->crop_x + cropw / 2;
-    const float cenh = img->crop_y + croph / 2;
-    // Get distance from center to furthest corner of the ActiveArea
-    const float actw2 = MAX(cenw - img->exif_correction_data.dng.activearea[1],
-                           img->exif_correction_data.dng.activearea[3] - cenw);
-    const float acth2 = MAX(cenh - img->exif_correction_data.dng.activearea[0],
-                           img->exif_correction_data.dng.activearea[2] - cenh);
-    // The DNG opcodes define r = 1 as the distance from the center to the
-    // furthest corner of the ActiveArea, but this module defines r = 1 as the
-    // distance from the center to the corner of the crop region. Adjust the
-    // radius to correct for this difference.
-    const float r_scale = hypot(actw2, acth2) / hypot(cropw / 2, croph / 2);
+    float r_scale = 1;
+    if(img->exif_correction_data.dng.activearea[0] != -1)
+    {
+      // Assume the center of the crop region is the center of the image.
+      const float cropw = img->width - img->crop_width - img->crop_x;
+      const float croph = img->height - img->crop_height - img->crop_y;
+      const float cenw = img->crop_x + cropw / 2;
+      const float cenh = img->crop_y + croph / 2;
+      // Get distance from center to furthest corner of the ActiveArea
+      const float actw2 = MAX(cenw - img->exif_correction_data.dng.activearea[1],
+                            img->exif_correction_data.dng.activearea[3] - cenw);
+      const float acth2 = MAX(cenh - img->exif_correction_data.dng.activearea[0],
+                            img->exif_correction_data.dng.activearea[2] - cenh);
+      // The DNG opcodes define r = 1 as the distance from the center to the
+      // furthest corner of the ActiveArea, but this module defines r = 1 as the
+      // distance from the center to the corner of the crop region. Adjust the
+      // radius to correct for this difference.
+      r_scale = hypot(actw2, acth2) / hypot(cropw / 2, croph / 2);
+    }
 
     const float k0[3] = { cd->dng.cwarp[0][0], cd->dng.cwarp[1][0], cd->dng.cwarp[2][0] };
     const float k2[3] = { cd->dng.cwarp[0][1], cd->dng.cwarp[1][1], cd->dng.cwarp[2][1] };
