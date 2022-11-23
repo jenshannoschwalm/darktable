@@ -1465,12 +1465,17 @@ static float _interpolate_linear_spline(const float *xi, const float *yi, int ni
 }
 
 static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p, float scale,
-                       float knots[MAXKNOTS], float cor_rgb[3][MAXKNOTS], float vig[MAXKNOTS])
+                       float knots[MAXKNOTS], float cor_rgb[3][MAXKNOTS], float vig[MAXKNOTS],
+                       int *modify_flags_image_md)
 {
   const dt_image_correction_data_t *cd = &img->exif_correction_data;
 
   if(img->exif_correction_type == CORRECTION_TYPE_SONY)
   {
+    if (modify_flags_image_md)
+      *modify_flags_image_md
+          = DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA | DT_IOP_LENS_MODIFY_FLAG_VIGNETTING;
+
     int nc = cd->sony.nc;
     for(int i = 0; i < nc; i++)
     {
@@ -1497,6 +1502,10 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
   }
   else if(img->exif_correction_type == CORRECTION_TYPE_FUJI)
   {
+    if (modify_flags_image_md)
+      *modify_flags_image_md
+          = DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA | DT_IOP_LENS_MODIFY_FLAG_VIGNETTING;
+
     int nc = cd->fuji.nc;
     for(int i = 0; i < nc; i++)
     {
@@ -1552,6 +1561,20 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
       if(cor_rgb && cd->dng.has_warp && p->modify_flags & (DT_IOP_LENS_MODIFY_FLAG_DISTORTION | DT_IOP_LENS_MODIFY_FLAG_TCA))
       {
+        if(modify_flags_image_md)
+        {
+          // If all planes or green plane is not a no-op, then distortion is being applied
+          const int g_plane = cd->dng.planes == 3 ? 1 : 0;
+          if(k0[g_plane] != 1 || k2[g_plane] != 0 || k4[g_plane] != 0 || k6[g_plane] != 0)
+            *modify_flags_image_md |= DT_IOP_LENS_MODIFY_FLAG_DISTORTION;
+
+          if(cd->dng.planes == 3)
+            // If the red or blue plane differs from the green plane, then TCA is being applied
+            if(k0[0] != k0[1] || k2[0] != k2[1] || k4[0] != k4[1] || k6[0] != k6[1]
+              || k0[2] != k0[1] || k2[2] != k2[1] || k4[2] != k4[1] || k6[2] != k6[1])
+              *modify_flags_image_md |= DT_IOP_LENS_MODIFY_FLAG_TCA;
+        }
+
         for(int c = 0; c < cd->dng.planes; c++)
         {
           // Convert the polynomial to a spline by evaluating it at each knot
@@ -1567,6 +1590,12 @@ static int _init_coeffs_md(const dt_image_t *img, const dt_iop_lens_params_t *p,
 
       if(vig && cd->dng.has_vignette && (p->modify_flags & DT_IOP_LENS_MODIFY_FLAG_VIGNETTING))
       {
+        if(modify_flags_image_md)
+          // Only indicate vignetting was applied if the opcode is not a no-op
+          for(int j = 0; j < 5; j++)
+            if(cd->dng.cvig[j] != 0)
+              *modify_flags_image_md |= DT_IOP_LENS_MODIFY_FLAG_VIGNETTING;
+
         // Pixel value is to be divided by (1 + dvig) to correct vignetting
         const float dvig = cd->dng.cvig[0] * powf(r, 2.0f) + cd->dng.cvig[1] * powf(r, 4.0f)
                            + cd->dng.cvig[2] * powf(r, 6.0f) + cd->dng.cvig[3] * powf(r, 8.0f)
@@ -1592,7 +1621,7 @@ static float _get_autoscale_md(dt_iop_module_t *self, dt_iop_lens_params_t *p)
 
   float knots[MAXKNOTS], cor_rgb[3][MAXKNOTS];
   // Default the scale to one for the benefit of init_coeffs
-  int nc = _init_coeffs_md(img, p, 1.0f, knots, cor_rgb, NULL);
+  int nc = _init_coeffs_md(img, p, 1.0f, knots, cor_rgb, NULL, NULL);
 
   // Compute the new scale
   float scale = 0;
@@ -1611,6 +1640,8 @@ static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt
 
   d->nc = 0;
 
+  int modify_flags_image_md = 0;
+
   if(!_have_embedded_metadata(self))
   {
     return;
@@ -1622,13 +1653,14 @@ static void _commit_params_md(dt_iop_module_t *self, dt_iop_lens_params_t *p, dt
   // Calculate auto scale. This is ignored for DNG distortion.
   d->scale_md = _get_autoscale_md(self, p);
 
-  int nc = _init_coeffs_md(img, p, d->scale_md, d->knots, d->cor_rgb, d->vig);
+  const int nc = _init_coeffs_md(img, p, d->scale_md, d->knots, d->cor_rgb, d->vig, &modify_flags_image_md);
   d->nc = nc;
 
   if(self->dev->gui_attached && g && (piece->pipe->type & DT_DEV_PIXELPIPE_PREVIEW))
   {
     dt_iop_gui_enter_critical_section(self);
-    g->corrections_done = d->modify_flags;
+    // Show only the corrections that were enabled by the user and exist in this image's metadata
+    g->corrections_done = d->modify_flags & modify_flags_image_md;
     dt_iop_gui_leave_critical_section(self);
   }
 }
