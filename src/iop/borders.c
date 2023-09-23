@@ -264,7 +264,7 @@ int default_group()
   return IOP_GROUP_EFFECT | IOP_GROUP_EFFECTS;
 }
 
-int operation_tags()
+int operation_tags(const dt_iop_module_t *self)
 {
   return IOP_TAG_DISTORT | IOP_TAG_DECORATION;
 }

@@ -378,7 +378,7 @@ int flags()
          | IOP_FLAGS_GUIDES_SPECIAL_DRAW | IOP_FLAGS_GUIDES_WIDGET | IOP_FLAGS_DEPRECATED;
 }
 
-int operation_tags()
+int operation_tags(const dt_iop_module_t *self)
 {
   return IOP_TAG_DISTORT | IOP_TAG_CROPPING;
 }

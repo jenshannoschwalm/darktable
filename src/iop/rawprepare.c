@@ -99,7 +99,7 @@ const char *name()
   return C_("modulename", "raw black/white point");
 }
 
-int operation_tags()
+int operation_tags(const dt_iop_module_t *self)
 {
   return IOP_TAG_DISTORT;
 }

@@ -1385,7 +1385,7 @@ static gboolean _dev_pixelpipe_process_rec(
     // skip this module?
     if(!piece->enabled
        || (dev->gui_module && dev->gui_module != module
-           && dev->gui_module->operation_tags_filter() & module->operation_tags()))
+           && dev->gui_module->operation_tags_filter() & module->operation_tags(module)))
       return _dev_pixelpipe_process_rec(pipe, dev, output, cl_mem_output, out_format,
                                         &roi_in,
                                         g_list_previous(modules),
@@ -1581,7 +1581,7 @@ static gboolean _dev_pixelpipe_process_rec(
   // FIXME: Could we do a copy by roi here ?
   if(!dt_iop_module_is(module->so, "gamma")
      && (pipe->mask_display != DT_DEV_PIXELPIPE_DISPLAY_NONE)
-     && !(module->operation_tags() & IOP_TAG_DISTORT)
+     && !(module->operation_tags(module) & IOP_TAG_DISTORT)
      && (in_bpp == out_bpp)
      && !memcmp(&roi_in, roi_out, sizeof(struct dt_iop_roi_t)))
   {
@@ -2805,7 +2805,7 @@ void dt_dev_pixelpipe_get_dimensions(dt_dev_pixelpipe_t *pipe,
     // skip this module?
     if(piece->enabled
        && !(dev->gui_module && dev->gui_module != module
-            && dev->gui_module->operation_tags_filter() & module->operation_tags()))
+            && dev->gui_module->operation_tags_filter() & module->operation_tags(module)))
     {
       module->modify_roi_out(module, piece, &roi_out, &roi_in);
     }
@@ -2919,7 +2919,7 @@ float *dt_dev_get_raster_mask(const struct dt_dev_pixelpipe_iop_t *piece,
              && !(it_piece->module->dev->gui_module
                   && it_piece->module->dev->gui_module != it_piece->module
                   && (it_piece->module->dev->gui_module->operation_tags_filter()
-                      & it_piece->module->operation_tags())))
+                      & it_piece->module->operation_tags(it_piece->module))))
           {
             if(it_piece->module->distort_mask
               // hack against pipes not using finalscale
@@ -3153,7 +3153,7 @@ float *dt_dev_distort_detail_mask(dt_dev_pixelpipe_t *pipe,
          && !(it_piece->module->dev->gui_module
               && it_piece->module->dev->gui_module != it_piece->module
               && it_piece->module->dev->gui_module->operation_tags_filter()
-                 & it_piece->module->operation_tags()))
+                 & it_piece->module->operation_tags(it_piece->module)))
       {
         // hack against pipes not using finalscale
         if(it_piece->module->distort_mask

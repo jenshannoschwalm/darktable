@@ -123,7 +123,7 @@ static int default_flags(void)
 
 /* default operation tags for modules which does not implement the
  * flags() function */
-static int default_operation_tags(void)
+static int default_operation_tags(const struct dt_iop_module_t *self)
 {
   return 0;
 }
@@ -2201,7 +2201,7 @@ static gboolean _iop_any_with_tag(const int optag)
   for(GList *modules = darktable.develop->iop; modules; modules = g_list_next(modules))
   {
     const dt_iop_module_t *module = (dt_iop_module_t *)modules->data;
-    if(module->enabled && (optag & module->operation_tags()))
+    if(module->enabled && (optag & module->operation_tags(module)))
       return TRUE;
   }
   return FALSE;
@@ -2284,10 +2284,10 @@ void dt_iop_request_focus(dt_iop_module_t *module)
 
   const int op_filter =
           (out_focus_module ? out_focus_module->operation_tags_filter() : 0)
-      ||  (module ? module->operation_tags_filter() : 0);
+        | (module ? module->operation_tags_filter() : 0);
   const int op_tags =
-          (out_focus_module ? out_focus_module->operation_tags() : 0)
-      ||  (module ? module->operation_tags() : 0);
+          (out_focus_module ? out_focus_module->operation_tags(out_focus_module) : 0)
+        | (module ? module->operation_tags(module) : 0);
 
   if((op_tags & IOP_TAG_CROPPING)
     || ((op_filter & IOP_TAG_CROPPING)
@@ -2297,8 +2297,8 @@ void dt_iop_request_focus(dt_iop_module_t *module)
   {
     dt_dev_pixelpipe_rebuild(dev);
     // don't use previous image as overlay
-    // if(dev->pipe) dev->pipe->backbuf_zoom_x = 1000;
-    // if(dev->preview2_pipe) dev->preview2_pipe->backbuf_zoom_x = 1000;
+    if(dev->pipe) dev->pipe->backbuf_zoom_x = 1000;
+    if(dev->preview2_pipe) dev->preview2_pipe->backbuf_zoom_x = 1000;
   }
 
   // update guides button state

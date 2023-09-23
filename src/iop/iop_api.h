@@ -81,7 +81,7 @@ DEFAULT(const char *, deprecated_msg, void);
 /** get a descriptive text used for example in a tooltip in more modules */
 DEFAULT(const char **, description, struct dt_iop_module_t *self);
 
-DEFAULT(int, operation_tags, void);
+DEFAULT(int, operation_tags, const struct dt_iop_module_t *self);
 DEFAULT(int, operation_tags_filter, void);
 
 /** what do the iop want as an input? */

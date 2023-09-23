@@ -311,7 +311,7 @@ int flags()
   return IOP_FLAGS_SUPPORTS_BLENDING;
 }
 
-int operation_tags()
+int operation_tags(const dt_iop_module_t *self)
 {
    return IOP_TAG_DISTORT;
 }

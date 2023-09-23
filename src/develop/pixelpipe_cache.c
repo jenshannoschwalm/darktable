@@ -135,7 +135,7 @@ static uint64_t _dev_pixelpipe_cache_basichash(
     dt_dev_pixelpipe_iop_t *piece = (dt_dev_pixelpipe_iop_t *)pieces->data;
     dt_develop_t *dev = piece->module->dev;
     if(!(dev->gui_module && dev->gui_module != piece->module
-         && (dev->gui_module->operation_tags_filter() & piece->module->operation_tags())))
+         && (dev->gui_module->operation_tags_filter() & piece->module->operation_tags(piece->module))))
     {
       hash = ((hash << 5) + hash) ^ piece->hash;
       if(piece->module->request_color_pick != DT_REQUEST_COLORPICK_OFF)

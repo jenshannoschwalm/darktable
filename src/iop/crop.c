@@ -150,9 +150,12 @@ int flags()
     | IOP_FLAGS_GUIDES_SPECIAL_DRAW | IOP_FLAGS_GUIDES_WIDGET | IOP_FLAGS_CROP_EXPOSER;
 }
 
-int operation_tags()
+int operation_tags(const dt_iop_module_t *self)
 {
-  return IOP_TAG_DISTORT | IOP_TAG_CROPPING;
+  dt_iop_crop_params_t *p = (dt_iop_crop_params_t *)self->params;
+
+  gboolean crop_active = p->cx != 0.0f || p->cy != 0.0f || p->cw != 1.0f || p->ch != 1.0f;
+  return IOP_TAG_DISTORT | (crop_active ? IOP_TAG_CROPPING : 0);
 }
 
 int operation_tags_filter()

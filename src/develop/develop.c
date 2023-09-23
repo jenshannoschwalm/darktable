@@ -3083,7 +3083,7 @@ int dt_dev_distort_transform_locked(dt_develop_t *dev,
            || (transf_direction == DT_DEV_TRANSFORM_DIR_BACK_EXCL
                && module->iop_order < iop_order))
        && !(dev->gui_module && dev->gui_module != module
-            && (dev->gui_module->operation_tags_filter() & module->operation_tags())))
+            && (dev->gui_module->operation_tags_filter() & module->operation_tags(module))))
     {
       module->distort_transform(module, piece, points, points_count);
     }
@@ -3148,7 +3148,7 @@ int dt_dev_distort_backtransform_locked(dt_develop_t *dev,
            || (transf_direction == DT_DEV_TRANSFORM_DIR_BACK_EXCL
                && module->iop_order < iop_order))
        && !(dev->gui_module && dev->gui_module != module
-            && (dev->gui_module->operation_tags_filter() & module->operation_tags())))
+            && (dev->gui_module->operation_tags_filter() & module->operation_tags(module))))
     {
       module->distort_backtransform(module, piece, points, points_count);
     }
@@ -3333,7 +3333,7 @@ uint64_t dt_dev_hash_distort_plus(dt_develop_t *dev,
     }
     dt_iop_module_t *module = (dt_iop_module_t *)(modules->data);
     dt_dev_pixelpipe_iop_t *piece = (dt_dev_pixelpipe_iop_t *)(pieces->data);
-    if(piece->enabled && module->operation_tags() & IOP_TAG_DISTORT
+    if(piece->enabled && module->operation_tags(module) & IOP_TAG_DISTORT
        && ((transf_direction == DT_DEV_TRANSFORM_DIR_ALL)
            || (transf_direction == DT_DEV_TRANSFORM_DIR_FORW_INCL
                && module->iop_order >= iop_order)
