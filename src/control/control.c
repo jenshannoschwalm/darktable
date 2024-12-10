@@ -201,6 +201,7 @@ void dt_control_init(dt_control_t *s)
   s->widget_definitions = g_ptr_array_new ();
   s->input_drivers = NULL;
   dt_atomic_set_int(&s->running, DT_CONTROL_STATE_DISABLED);
+  dt_atomic_set_int(&s->pending_jobs, 0);
   s->cups_started = FALSE;
 
   dt_action_define_fallback(DT_ACTION_TYPE_IOP, &dt_action_def_iop);
@@ -326,22 +327,35 @@ void dt_control_shutdown(dt_control_t *s)
     return;
 
   dt_pthread_mutex_lock(&s->cond_mutex);
-  const gboolean cleanup = dt_atomic_exch_int(&s->running, DT_CONTROL_STATE_DISABLED) == DT_CONTROL_STATE_CLEANUP;
+  // just want to know if we need to cleanup at all
+  const gboolean cleanup = dt_atomic_get_int(&s->running) == DT_CONTROL_STATE_CLEANUP;
   pthread_cond_broadcast(&s->cond);
   dt_pthread_mutex_unlock(&s->cond_mutex);
 
-  int err = 0; // collect all joining errors
+  int err = 0;
+
   /* first wait for gphoto device updater */
 #ifdef HAVE_GPHOTO2
    err = pthread_join(s->update_gphoto_thread, NULL);
 #endif
 
   if(!cleanup)
-    return;   // if not running there are no threads to join
+    return;   // if control was not running there are no threads to join
 
-  dt_print(DT_DEBUG_CONTROL, "[dt_control_shutdown] closing control threads");
+  // wait for up to 30 seconds while jobs are still going on
+  // FIXME a simple while loop after sorting out the pending jobs counting?
+  for(int i = 0; i < 30 && (dt_control_jobs_pending(s) > 0); i++)
+  {
+    dt_print(DT_DEBUG_CONTROL, "[dt_control_shutdown] closing control threads, %d pending jobs", dt_control_jobs_pending(s));
+    g_usleep(1000000);
+  }
 
-  /* then wait for kick_on_workers_thread */
+  // finally stop all jobs work and join threads
+  dt_print(DT_DEBUG_CONTROL, "[dt_control_shutdown] switching to DT_CONTROL_STATE_DISABLED, %d pending jobs", dt_control_jobs_pending(s));
+  dt_atomic_set_int(&s->running, DT_CONTROL_STATE_DISABLED);
+  g_usleep(10000);
+
+  /* wait for kick_on_workers_thread */
   err = pthread_join(s->kick_on_workers_thread, NULL);
   dt_print(DT_DEBUG_CONTROL, "[dt_control_shutdown] joined kicker%s", err ? ", error" : "");
 

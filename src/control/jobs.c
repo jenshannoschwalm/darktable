@@ -82,11 +82,14 @@ static void _control_job_set_state(_dt_job_t *job,
 {
   if(!job) return;
   dt_pthread_mutex_lock(&job->state_mutex);
-  if(state >= DT_JOB_STATE_FINISHED  && job->state != DT_JOB_STATE_RUNNING && job->progress)
+  if(state >= DT_JOB_STATE_FINISHED
+    && job->state != DT_JOB_STATE_RUNNING
+    && job->progress)
   {
     dt_control_progress_destroy(darktable.control, job->progress);
     job->progress = NULL;
   }
+
   job->state = state;
   /* pass state change to callback */
   if(job->state_changed_cb) job->state_changed_cb(job, state);
@@ -191,7 +194,11 @@ static void _control_job_print(_dt_job_t *job, const char *info, const char *err
 {
   if(!job) return;
   dt_print(DT_DEBUG_CONTROL, "[%s]\t%02d %s %s | queue: %d | priority: %d",
-    info, res, err, job->description, job->queue, job->priority);
+    info ? info : "info missing",
+    res,
+    err ? err : "err missing",
+    job->description ? job->description : "???",
+    job->queue, job->priority);
 }
 
 void dt_control_job_cancel(_dt_job_t *job)
@@ -257,6 +264,7 @@ static gboolean _control_run_job_res(dt_control_t *control, int32_t res)
     _control_job_set_state(job, DT_JOB_STATE_FINISHED);
     _control_job_print(job, "run_job-", "", res);
   }
+  dt_atomic_add_int(&darktable.control->pending_jobs, -1);
   dt_pthread_mutex_unlock(&job->wait_mutex);
   dt_control_job_dispose(job);
   return FALSE;
@@ -336,6 +344,7 @@ static void _control_job_execute(_dt_job_t *job)
 
   _control_job_set_state(job, DT_JOB_STATE_FINISHED);
   _control_job_print(job, "run_job-", "", DT_CTL_WORKER_RESERVED + dt_control_get_threadid());
+  dt_atomic_add_int(&darktable.control->pending_jobs, -1);
 }
 
 static gboolean _control_run_job(dt_control_t *control)
@@ -382,6 +391,8 @@ gboolean dt_control_add_job_res(dt_control_t *control,
     _control_job_set_state(control->job_res[res], DT_JOB_STATE_DISCARDED);
     dt_control_job_dispose(control->job_res[res]);
   }
+
+  dt_atomic_add_int(&darktable.control->pending_jobs, 1);
 
   dt_print(DT_DEBUG_CONTROL, "[add_job_res] %d | ", res);
   _control_job_print(job, "add_job_res", "", res);
@@ -454,6 +465,7 @@ gboolean dt_control_add_job(dt_control_t *control,
       }
     }
 
+    dt_atomic_add_int(&darktable.control->pending_jobs, 1);
     // if the job is already in the queue -> move it to the top
     for(GList *iter = *queue; iter; iter = g_list_next(iter))
     {
@@ -542,9 +554,10 @@ static void *_control_work_res(void *ptr)
   dt_pthread_setname(name);
   free(params);
   int32_t threadid_res = _control_get_threadid_res();
-  while(dt_control_running())
+
+  while(dt_atomic_get_int(&s->running) != DT_CONTROL_STATE_DISABLED)
   {
-    // dt_print(DT_DEBUG_CONTROL, "[control_work] %d", threadid_res);
+    dt_print(DT_DEBUG_CONTROL, "[control_work_res] %d", threadid_res);
     if(_control_run_job_res(s, threadid_res))
     {
       // wait for a new job.
@@ -564,7 +577,7 @@ static void *_control_worker_kicker(void *ptr)
 {
   dt_control_t *control = (dt_control_t *)ptr;
   dt_pthread_setname("kicker");
-  while(dt_control_running())
+  while(dt_atomic_get_int(&control->running) != DT_CONTROL_STATE_DISABLED)
   {
     sleep(2);
     dt_pthread_mutex_lock(&control->cond_mutex);
@@ -587,9 +600,9 @@ static void *_control_work(void *ptr)
   dt_pthread_setname(name);
   free(params);
   // int32_t threadid = dt_control_get_threadid();
-  while(dt_control_running())
+  while(dt_atomic_get_int(&control->running) != DT_CONTROL_STATE_DISABLED)
   {
-    // dt_print(DT_DEBUG_CONTROL, "[control_work] %d", threadid);
+    dt_print(DT_DEBUG_CONTROL, "[control_work] %d", threadid);
     if(_control_run_job(control))
     {
       // wait for a new job.
@@ -676,6 +689,11 @@ void dt_control_jobs_cleanup(dt_control_t *control)
   control->job = NULL;
   free(control->thread);
   control->thread = NULL;
+}
+
+int dt_control_jobs_pending(dt_control_t *control)
+{
+  return dt_atomic_get_int(&control->pending_jobs);
 }
 
 // clang-format off
