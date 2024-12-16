@@ -2050,6 +2050,7 @@ void dt_cleanup()
 
     dt_lib_cleanup(darktable.lib);
     free(darktable.lib);
+    darktable.lib = NULL;
   }
 #ifdef USE_LUA
   dt_lua_finalize();

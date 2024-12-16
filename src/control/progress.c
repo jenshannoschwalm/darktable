@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2014-2023 darktable developers.
+    Copyright (C) 2014-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -59,7 +59,7 @@ typedef struct _dt_progress_t
 
 } _dt_progress_t;
 
-static void global_progress_start(dt_control_t *control, dt_progress_t *progress)
+static void _global_progress_start(dt_control_t *control, dt_progress_t *progress)
 {
   control->progress_system.n_progress_bar++;
 
@@ -125,7 +125,7 @@ static void global_progress_start(dt_control_t *control, dt_progress_t *progress
 #endif
 }
 
-static void global_progress_set(dt_control_t *control, dt_progress_t *progress, double value)
+static void _global_progress_set(dt_control_t *control, dt_progress_t *progress, double value)
 {
   control->progress_system.global_progress = MAX(control->progress_system.global_progress, value);
 
@@ -174,7 +174,7 @@ static void global_progress_set(dt_control_t *control, dt_progress_t *progress, 
 #endif
 }
 
-static void global_progress_end(dt_control_t *control, dt_progress_t *progress)
+static void _global_progress_end(dt_control_t *control, dt_progress_t *progress)
 {
   control->progress_system.n_progress_bar--;
 
@@ -248,7 +248,7 @@ static void global_progress_end(dt_control_t *control, dt_progress_t *progress)
 #endif
 }
 
-void dt_control_progress_init(struct dt_control_t *control)
+void dt_control_progress_init(dt_control_t *control)
 {
 #ifndef _WIN32
 
@@ -295,9 +295,12 @@ void dt_control_progress_init(struct dt_control_t *control)
 #endif // _WIN32
 }
 
-dt_progress_t *dt_control_progress_create(dt_control_t *control, gboolean has_progress_bar,
+dt_progress_t *dt_control_progress_create(dt_control_t *control,
+                                          gboolean has_progress_bar,
                                           const gchar *message)
 {
+  if(!dt_control_running())
+    return NULL;
   // create the object
   dt_progress_t *progress = calloc(1, sizeof(dt_progress_t));
   dt_pthread_mutex_init(&(progress->mutex), NULL);
@@ -311,7 +314,8 @@ dt_progress_t *dt_control_progress_create(dt_control_t *control, gboolean has_pr
   // add it to the global list
   control->progress_system.list = g_list_append(control->progress_system.list, progress);
   control->progress_system.list_length++;
-  if(has_progress_bar) global_progress_start(control, progress);
+  if(has_progress_bar)
+    _global_progress_start(control, progress);
 
   // tell the gui
   if(control->progress_system.proxy.module != NULL)
@@ -325,6 +329,7 @@ dt_progress_t *dt_control_progress_create(dt_control_t *control, gboolean has_pr
 
 void dt_control_progress_destroy(dt_control_t *control, dt_progress_t *progress)
 {
+  if(!control || !progress) return;
   dt_pthread_mutex_lock(&control->progress_system.mutex);
 
   // tell the gui
@@ -334,7 +339,8 @@ void dt_control_progress_destroy(dt_control_t *control, dt_progress_t *progress)
   // remove the object from the global list
   control->progress_system.list = g_list_remove(control->progress_system.list, progress);
   control->progress_system.list_length--;
-  if(progress->has_progress_bar) global_progress_end(control, progress);
+  if(progress->has_progress_bar)
+    _global_progress_end(control, progress);
 
   dt_pthread_mutex_unlock(&control->progress_system.mutex);
 
@@ -344,9 +350,12 @@ void dt_control_progress_destroy(dt_control_t *control, dt_progress_t *progress)
   free(progress);
 }
 
-void dt_control_progress_make_cancellable(struct dt_control_t *control, dt_progress_t *progress,
-                                          dt_progress_cancel_callback_t cancel, void *data)
+void dt_control_progress_make_cancellable(dt_control_t *control,
+                                          dt_progress_t *progress,
+                                          dt_progress_cancel_callback_t cancel,
+                                          void *data)
 {
+  if(!dt_control_running() || !progress) return;
   // set the value
   dt_pthread_mutex_lock(&progress->mutex);
   progress->cancel = cancel;
@@ -361,18 +370,19 @@ void dt_control_progress_make_cancellable(struct dt_control_t *control, dt_progr
   dt_pthread_mutex_unlock(&control->progress_system.mutex);
 }
 
-static void dt_control_progress_cancel_callback(dt_progress_t *progress, void *data)
+static void _control_progress_cancel_callback(dt_progress_t *progress, void *data)
 {
   dt_control_job_cancel((dt_job_t *)data);
 }
 
 void dt_control_progress_attach_job(dt_control_t *control, dt_progress_t *progress, dt_job_t *job)
 {
-  dt_control_progress_make_cancellable(control, progress, &dt_control_progress_cancel_callback, job);
+  dt_control_progress_make_cancellable(control, progress, &_control_progress_cancel_callback, job);
 }
 
 void dt_control_progress_cancel(dt_control_t *control, dt_progress_t *progress)
 {
+  if(!control || !progress) return;
   dt_pthread_mutex_lock(&progress->mutex);
   if(progress->cancel == NULL)
   {
@@ -390,6 +400,7 @@ void dt_control_progress_cancel(dt_control_t *control, dt_progress_t *progress)
 
 void dt_control_progress_set_progress(dt_control_t *control, dt_progress_t *progress, double value)
 {
+  if(!dt_control_running() || !progress) return;
   // set the value
   value = CLAMP(value, 0.0, 1.0);
   dt_pthread_mutex_lock(&progress->mutex);
@@ -401,21 +412,24 @@ void dt_control_progress_set_progress(dt_control_t *control, dt_progress_t *prog
   if(control->progress_system.proxy.module != NULL)
     control->progress_system.proxy.updated(control->progress_system.proxy.module, progress->gui_data, value);
 
-  if(progress->has_progress_bar) global_progress_set(control, progress, value);
+  if(progress->has_progress_bar)
+    _global_progress_set(control, progress, value);
 
   dt_pthread_mutex_unlock(&control->progress_system.mutex);
 }
 
 double dt_control_progress_get_progress(dt_progress_t *progress)
 {
+  if(!progress) return 1.0;
   dt_pthread_mutex_lock(&progress->mutex);
-  double res = progress->progress;
+  const double res = progress->progress;
   dt_pthread_mutex_unlock(&progress->mutex);
   return res;
 }
 
 const gchar *dt_control_progress_get_message(dt_progress_t *progress)
 {
+  if(!progress) return "";
   dt_pthread_mutex_lock(&progress->mutex);
   const gchar *res = progress->message;
   dt_pthread_mutex_unlock(&progress->mutex);
@@ -424,6 +438,7 @@ const gchar *dt_control_progress_get_message(dt_progress_t *progress)
 
 void dt_control_progress_set_message(dt_control_t *control, dt_progress_t *progress, const char *message)
 {
+  if(!dt_control_running() || !progress) return;
   dt_pthread_mutex_lock(&progress->mutex);
   g_free(progress->message);
   progress->message = g_strdup(message);
@@ -439,6 +454,7 @@ void dt_control_progress_set_message(dt_control_t *control, dt_progress_t *progr
 
 void dt_control_progress_set_gui_data(dt_progress_t *progress, void *data)
 {
+  if(!progress) return;
   dt_pthread_mutex_lock(&progress->mutex);
   progress->gui_data = data;
   dt_pthread_mutex_unlock(&progress->mutex);
@@ -446,6 +462,7 @@ void dt_control_progress_set_gui_data(dt_progress_t *progress, void *data)
 
 void *dt_control_progress_get_gui_data(dt_progress_t *progress)
 {
+  if(!progress) return NULL;
   dt_pthread_mutex_lock(&progress->mutex);
   void *res = progress->gui_data;
   dt_pthread_mutex_unlock(&progress->mutex);
@@ -454,16 +471,18 @@ void *dt_control_progress_get_gui_data(dt_progress_t *progress)
 
 gboolean dt_control_progress_has_progress_bar(dt_progress_t *progress)
 {
+  if(!progress) return FALSE;
   dt_pthread_mutex_lock(&progress->mutex);
-  gboolean res = progress->has_progress_bar;
+  const gboolean res = progress->has_progress_bar;
   dt_pthread_mutex_unlock(&progress->mutex);
   return res;
 }
 
 gboolean dt_control_progress_cancellable(dt_progress_t *progress)
 {
+  if(!progress) return FALSE;
   dt_pthread_mutex_lock(&progress->mutex);
-  gboolean res = progress->cancel != NULL;
+  const gboolean res = progress->cancel != NULL;
   dt_pthread_mutex_unlock(&progress->mutex);
   return res;
 }

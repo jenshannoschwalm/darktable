@@ -1046,6 +1046,11 @@ gboolean dt_imageio_export_with_flags(const dt_imgid_t imgid,
                                       dt_export_metadata_t *metadata,
                                       const int history_end)
 {
+  if(darktable.imageio == NULL)
+  {
+    dt_print(DT_DEBUG_IMAGEIO, "[dt_imageio_export_with_flags] aborted as imageio is closed");
+    return TRUE;
+  }
   dt_develop_t dev;
   dt_dev_init(&dev, FALSE);
   dt_dev_load_image(&dev, imgid);

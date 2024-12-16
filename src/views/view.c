@@ -113,7 +113,7 @@ void dt_view_manager_cleanup(dt_view_manager_t *vm)
 
 const dt_view_t *dt_view_manager_get_current_view(dt_view_manager_t *vm)
 {
-  return vm->current_view;
+  return vm ? vm->current_view : DT_VIEW_NONE;
 }
 
 // we want a stable order of views, for example for viewswitcher.
