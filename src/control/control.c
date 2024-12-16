@@ -334,20 +334,20 @@ void dt_control_shutdown()
 
 #ifdef HAVE_GPHOTO2
   /* first and always wait for gphoto device updater */
-  pthread_join(control->update_gphoto_thread, NULL);
+  dt_pthread_join(control->update_gphoto_thread);
 #endif
 
   if(!cleanup)
     return;   // if not running there are no threads to join
 
   /* wait for kick_on_workers_thread */
-  pthread_join(control->kick_on_workers_thread, NULL);
+  dt_pthread_join(control->kick_on_workers_thread);
 
   for(int k = 0; k < control->num_threads-1; k++)
-    pthread_join(control->thread[k], NULL);
+    dt_pthread_join(control->thread[k]);
 
   for(int k = 0; k < DT_CTL_WORKER_RESERVED; k++)
-    pthread_join(control->thread_res[k], NULL);
+    dt_pthread_join(control->thread_res[k]);
 }
 
 void dt_control_cleanup()

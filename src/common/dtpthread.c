@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2016-2023 darktable developers.
+    Copyright (C) 2016-2024 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -31,48 +31,44 @@
 #include "win/dtwin.h"
 #endif // _WIN32
 
+#include "common/dtpthread.h"
+
 int dt_pthread_create(pthread_t *thread, void *(*start_routine)(void *), void *arg)
 {
   int ret = 0;
 
   pthread_attr_t attr;
-
   ret = pthread_attr_init(&attr);
   if(ret != 0)
   {
-    fprintf(stderr, "[dt_pthread_create] error: pthread_attr_init() returned %i\n", ret);
-    return ret;
+    printf("[dt_pthread_create] error: pthread_attr_init() returned %s\n", _pthread_ret_mess(ret));
+    fflush(stdout);
   }
+  assert(ret);
 
   size_t stacksize;
-
   ret = pthread_attr_getstacksize(&attr, &stacksize);
-
-  if(ret != 0)
-  {
-    fprintf(stderr, "[dt_pthread_create] error: pthread_attr_getstacksize() returned %i\n", ret);
-  }
-
   if(ret != 0 || stacksize < WANTED_THREADS_STACK_SIZE)
   {
     // looks like we need to bump/set it...
     ret = pthread_attr_setstacksize(&attr, WANTED_THREADS_STACK_SIZE);
     if(ret != 0)
     {
-      fprintf(stderr, "[dt_pthread_create] error: pthread_attr_setstacksize() returned %i\n", ret);
+      printf("[dt_pthread_create] error: pthread_attr_setstacksize() returned %s\n", _pthread_ret_mess(ret));
+      fflush(stdout);
     }
   }
+  assert(ret);
 
-  if(ret == 0)
-    ret = pthread_create(thread, &attr, start_routine, arg);
-
+  ret = pthread_create(thread, &attr, start_routine, arg);
   if(ret != 0)
   {
-    fprintf(stderr, "[dt_pthread_create] error: pthread_create() returned %i\n", ret);
+    printf("[dt_pthread_create] error: pthread_create() returned %s\n", _pthread_ret_mess(ret));
+    fflush(stdout);
   }
 
   pthread_attr_destroy(&attr);
-
+  assert(ret);
   return ret;
 }
 
@@ -93,6 +89,18 @@ void dt_pthread_setname(const char *name)
 #elif defined _WIN32
   dtwin_set_thread_name((DWORD)-1, name);
 #endif
+}
+
+int dt_pthread_join(pthread_t thread)
+{
+  const int ret = pthread_join(thread, NULL);
+  if(ret != 0)
+  {
+    printf("[dt_pthread_join] error: %s\n", _pthread_ret_mess(ret));
+    fflush(stdout);
+  }
+  assert(ret);
+  return ret;
 }
 
 
