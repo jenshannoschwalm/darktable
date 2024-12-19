@@ -244,21 +244,21 @@ typedef struct dt_control_t
 
 } dt_control_t;
 
-void dt_control_init(dt_control_t *s);
+void dt_control_init(void);
 
 // join all worker threads.
-void dt_control_shutdown(dt_control_t *s);
-void dt_control_cleanup(dt_control_t *s);
+void dt_control_shutdown(void);
+void dt_control_cleanup(void);
 
 // call this to quit dt
-void dt_control_quit();
+void dt_control_quit(void);
 
 /** get threadsafe running state. */
-gboolean dt_control_running();
+gboolean dt_control_running(void);
 
 // thread-safe interface between core and gui.
 // is the locking really needed?
-dt_imgid_t dt_control_get_mouse_over_id();
+dt_imgid_t dt_control_get_mouse_over_id(void);
 void dt_control_set_mouse_over_id(const dt_imgid_t value);
 
 G_END_DECLS

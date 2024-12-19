@@ -1580,7 +1580,7 @@ int dt_init(int argc, char *argv[], const gboolean init_gui, const gboolean load
 
   if(init_gui)
   {
-    dt_control_init(darktable.control);
+    dt_control_init();
 
     // initialize undo struct
     darktable.undo = dt_undo_init();
@@ -2071,10 +2071,8 @@ void dt_cleanup()
     dt_imageio_cleanup(darktable.imageio);
     free(darktable.imageio);
     darktable.imageio = NULL;
-    dt_control_shutdown(darktable.control);
-    dt_control_cleanup(darktable.control);
-    free(darktable.control);
-    darktable.control = NULL;
+    dt_control_shutdown();
+    dt_control_cleanup();
     dt_undo_cleanup(darktable.undo);
     darktable.undo = NULL;
     free(darktable.gui);
