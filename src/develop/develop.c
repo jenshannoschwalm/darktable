@@ -621,9 +621,11 @@ void dt_dev_load_image(dt_develop_t *dev,
   // we need a global lock as the dev->iop set must not be changed
   // until read history is terminated
   dt_pthread_mutex_lock(&darktable.dev_threadsafe);
+  dt_pthread_mutex_lock(&dev->history_mutex);
   dev->iop = dt_iop_load_modules(dev);
 
   dt_dev_read_history_ext(dev, dev->image_storage.id, FALSE);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
   dt_pthread_mutex_unlock(&darktable.dev_threadsafe);
 
   dev->first_load = FALSE;
@@ -960,7 +962,9 @@ void dt_dev_add_history_item_ext(dt_develop_t *dev,
                                  const gboolean enable,
                                  const int no_image)
 {
+  dt_pthread_mutex_lock(&dev->history_mutex);
   _dev_add_history_item_ext(dev, module, enable, FALSE, no_image, FALSE, TRUE);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 static gboolean _dev_undo_start_record_target(dt_develop_t *dev, gpointer target)
@@ -1047,7 +1051,9 @@ void dt_dev_add_history_item(dt_develop_t *dev,
                              dt_iop_module_t *module,
                              const gboolean enable)
 {
+  dt_pthread_mutex_lock(&dev->history_mutex);
   _dev_add_history_item(dev, module, enable, FALSE, NULL);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void dt_dev_add_history_item_target(dt_develop_t *dev,
@@ -1055,14 +1061,18 @@ void dt_dev_add_history_item_target(dt_develop_t *dev,
                                     const gboolean enable,
                                     gpointer target)
 {
+  dt_pthread_mutex_lock(&dev->history_mutex);
   _dev_add_history_item(dev, module, enable, FALSE, target);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void dt_dev_add_new_history_item(dt_develop_t *dev,
                                  dt_iop_module_t *module,
                                  const gboolean enable)
 {
+  dt_pthread_mutex_lock(&dev->history_mutex);
   _dev_add_history_item(dev, module, enable, TRUE, NULL);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void dt_dev_add_masks_history_item_ext(dt_develop_t *dev,
@@ -1072,6 +1082,7 @@ void dt_dev_add_masks_history_item_ext(dt_develop_t *dev,
 {
   dt_iop_module_t *module = _module;
   gboolean enable = _enable;
+  dt_pthread_mutex_lock(&dev->history_mutex);
 
   // no module means that is called from the mask manager, so find the iop
   if(module == NULL)
@@ -1094,6 +1105,7 @@ void dt_dev_add_masks_history_item_ext(dt_develop_t *dev,
   else
     dt_print(DT_DEBUG_ALWAYS,
              "[dt_dev_add_masks_history_item_ext] can't find mask manager module");
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void dt_dev_add_masks_history_item(
@@ -1156,6 +1168,7 @@ void dt_dev_reload_history_items(dt_develop_t *dev)
   dev->focus_hash = 0;
 
   dt_lock_image(dev->image_storage.id);
+  dt_pthread_mutex_lock(&dev->history_mutex);
 
   dt_ioppr_set_default_iop_order(dev, dev->image_storage.id);
   dt_dev_pop_history_items(dev, 0);
@@ -1211,11 +1224,13 @@ void dt_dev_reload_history_items(dt_develop_t *dev)
   // set the module list order
   dt_dev_reorder_gui_module_list(dev);
 
+  dt_pthread_mutex_unlock(&dev->history_mutex);
   dt_unlock_image(dev->image_storage.id);
 }
 
 void dt_dev_pop_history_items_ext(dt_develop_t *dev, const int32_t cnt)
 {
+  dt_pthread_mutex_lock(&dev->history_mutex);
   dt_ioppr_check_iop_order(dev, 0, "dt_dev_pop_history_items_ext begin");
 
   const int end_prev = dev->history_end;
@@ -1287,6 +1302,7 @@ void dt_dev_pop_history_items_ext(dt_develop_t *dev, const int32_t cnt)
   }
   if(masks_changed)
     dt_masks_replace_current_forms(dev, forms);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void dt_dev_pop_history_items(dt_develop_t *dev, const int32_t cnt)
@@ -1375,6 +1391,7 @@ void dt_dev_write_history_ext(dt_develop_t *dev,
                               const dt_imgid_t imgid)
 {
   dt_lock_image(imgid);
+  dt_pthread_mutex_lock(&dev->history_mutex);
 
   _cleanup_history(imgid);
 
@@ -1404,6 +1421,7 @@ void dt_dev_write_history_ext(dt_develop_t *dev,
   dt_ioppr_write_iop_order_list(dev->iop_order_list, imgid);
   dt_history_hash_write_from_history(imgid, DT_HISTORY_HASH_CURRENT);
 
+  dt_pthread_mutex_unlock(&dev->history_mutex);
   dt_unlock_image(imgid);
 }
 

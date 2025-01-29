@@ -664,6 +664,7 @@ void dt_styles_apply_style_item(dt_develop_t *dev,
                                 const gboolean append)
 {
   // get any instance of the same operation so we can copy it
+  dt_pthread_mutex_lock(&dev->history_mutex);
   dt_iop_module_t *mod_src =
     dt_iop_get_module_by_op_priority(dev->iop, style_item->operation, -1);
 
@@ -797,6 +798,7 @@ void dt_styles_apply_style_item(dt_develop_t *dev,
       free(module);
     }
   }
+  dt_pthread_mutex_unlock(&dev->history_mutex);
 }
 
 void _styles_apply_to_image_ext(const char *name,
@@ -997,27 +999,32 @@ void dt_styles_apply_to_image(const char *name,
                               const gboolean overwrite,
                               const dt_imgid_t imgid)
 {
+  dt_lock_image(imgid);
   _styles_apply_to_image_ext(name, duplicate, overwrite, imgid, TRUE);
+  dt_unlock_image(imgid);
 }
 
 void dt_styles_apply_to_dev(const char *name, const dt_imgid_t imgid)
 {
-  if(!darktable.develop || !dt_is_valid_imgid(darktable.develop->image_storage.id))
+  dt_develop_t *dev = darktable.develop;
+  if(!dev || !dt_is_valid_imgid(dev->image_storage.id))
     return;
 
+  dt_pthread_mutex_lock(&dev->history_mutex);
   /* write current history changes so nothing gets lost */
-  dt_dev_write_history(darktable.develop);
+  dt_dev_write_history(dev);
 
-  dt_dev_undo_start_record(darktable.develop);
+  dt_dev_undo_start_record(dev);
 
   /* apply style on image and reload*/
   _styles_apply_to_image_ext(name, FALSE, FALSE, imgid, FALSE);
-  dt_dev_reload_image(darktable.develop, imgid);
-
-  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_TAG_CHANGED);
+  dt_dev_reload_image(dev, imgid);
 
   /* record current history state : after change (needed for undo) */
-  dt_dev_undo_end_record(darktable.develop);
+  dt_dev_undo_end_record(dev);
+  dt_pthread_mutex_unlock(&dev->history_mutex);
+
+  DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_TAG_CHANGED);
 
   // rebuild the accelerators (style might have changed order)
   dt_iop_connect_accels_all();
