@@ -1240,6 +1240,7 @@ static gboolean _lib_history_button_clicked_callback(GtkWidget *widget,
   // shift-click just show the corresponding module in modulegroups
   if(dt_modifier_is(e->state, GDK_SHIFT_MASK))
   {
+    dt_pthread_mutex_lock(&darktable.develop->history_mutex);
     const int num = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "history-number"));
     dt_dev_history_item_t *hist = g_list_nth_data(darktable.develop->history, num - 1);
     if(hist)
@@ -1247,11 +1248,14 @@ static gboolean _lib_history_button_clicked_callback(GtkWidget *widget,
       dt_dev_modulegroups_switch(darktable.develop, hist->module);
       dt_iop_gui_set_expanded(hist->module, TRUE, TRUE);
     }
+    dt_pthread_mutex_unlock(&darktable.develop->history_mutex);
     return TRUE;
   }
 
   dt_lib_history_t *d = self->data;
   reset = TRUE;
+
+  dt_pthread_mutex_lock(&darktable.develop->history_mutex);
 
   /* deactivate all toggle buttons */
   GList *children = gtk_container_get_children(GTK_CONTAINER(d->history_box));
@@ -1265,8 +1269,11 @@ static gboolean _lib_history_button_clicked_callback(GtkWidget *widget,
   g_list_free(children);
 
   reset = FALSE;
-  if(darktable.gui->reset) return FALSE;
-
+  if(darktable.gui->reset)
+  {
+    dt_pthread_mutex_unlock(&darktable.develop->history_mutex);
+    return FALSE;
+  }
   dt_dev_undo_start_record(darktable.develop);
 
   /* revert to given history item. */
@@ -1288,6 +1295,7 @@ static gboolean _lib_history_button_clicked_callback(GtkWidget *widget,
   dt_dev_undo_end_record(darktable.develop);
 
   dt_iop_connect_accels_all();
+  dt_pthread_mutex_unlock(&darktable.develop->history_mutex);
   dt_dev_modulegroups_set(darktable.develop, dt_dev_modulegroups_get(darktable.develop));
   return FALSE;
 }

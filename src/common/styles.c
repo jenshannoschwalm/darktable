@@ -1000,7 +1000,17 @@ void dt_styles_apply_to_image(const char *name,
                               const dt_imgid_t imgid)
 {
   dt_lock_image(imgid);
-  _styles_apply_to_image_ext(name, duplicate, overwrite, imgid, TRUE);
+
+  if(dt_view_get_current() == DT_VIEW_DARKROOM)
+  {
+    dt_print(DT_DEBUG_PIPE, "locking global history mutex");
+    dt_pthread_mutex_lock(&darktable.develop->history_mutex);
+    _styles_apply_to_image_ext(name, duplicate, overwrite, imgid, TRUE);
+    dt_pthread_mutex_unlock(&darktable.develop->history_mutex);
+  }
+  else
+    _styles_apply_to_image_ext(name, duplicate, overwrite, imgid, TRUE);
+
   dt_unlock_image(imgid);
 }
 
