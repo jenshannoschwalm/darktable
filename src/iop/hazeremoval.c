@@ -566,13 +566,17 @@ void process(dt_iop_module_t *self,
   rgb_pixel A0 = { NAN, NAN, NAN, 0.0f };
   float distance_max = NAN;
 
+  const gboolean hq = darktable.develop->late_scaling.enabled;
+
   // hazeremoval module needs the color and the haziness (which yields
   // distance_max) of the most hazy region of the image.  In pixelpipe
   // FULL we can not reliably get this value as the pixelpipe might
   // only see part of the image (region of interest).  Therefore, we
   // try to get A0 and distance_max from the PREVIEW pixelpipe which
   // luckily stores it for us.
-  if(self->dev->gui_attached && g && (piece->pipe->type & DT_DEV_PIXELPIPE_FULL))
+  if(self->dev->gui_attached
+      && g
+      && ((piece->pipe->type & (DT_DEV_PIXELPIPE_FULL | DT_DEV_PIXELPIPE_PREVIEW2)) && !hq))
   {
     dt_iop_gui_enter_critical_section(self);
     const dt_hash_t hash = g->hash;
@@ -596,9 +600,9 @@ void process(dt_iop_module_t *self,
     dt_iop_gui_leave_critical_section(self);
   }
 
-  // FIXME in pipe->type |= DT_DEV_PIXELPIPE_IMAGE mode we currently can't receive data from preview
-  // so we at least leave a note to the user
-  if(piece->pipe->type & DT_DEV_PIXELPIPE_IMAGE)
+  // FIXME in pipe->type |= DT_DEV_PIXELPIPE_IMAGE and we are not in HQ mode mode we currently
+  // can't receive data from preview so we at least leave a note to the user
+  if((piece->pipe->type & DT_DEV_PIXELPIPE_IMAGE) && !hq)
     dt_control_log(_("inconsistent output"));
 
   // In all other cases we calculate distance_max and A0 here.
@@ -822,6 +826,7 @@ int process_cl(dt_iop_module_t *self,
   // estimate diffusive ambient light and image depth
   rgb_pixel A0 = { NAN, NAN, NAN, 0.0f };
   float distance_max = NAN;
+  const gboolean hq = darktable.develop->late_scaling.enabled;
 
   // hazeremoval module needs the color and the haziness (which yields
   // distance_max) of the most hazy region of the image.  In pixelpipe
@@ -830,8 +835,8 @@ int process_cl(dt_iop_module_t *self,
   // try to get A0 and distance_max from the PREVIEW pixelpipe which
   // luckily stores it for us.
   if(self->dev->gui_attached
-     && g
-     && (piece->pipe->type & DT_DEV_PIXELPIPE_FULL))
+      && g
+      && ((piece->pipe->type & (DT_DEV_PIXELPIPE_FULL | DT_DEV_PIXELPIPE_PREVIEW2)) && !hq))
   {
     dt_iop_gui_enter_critical_section(self);
     const dt_hash_t hash = g->hash;
@@ -860,7 +865,7 @@ int process_cl(dt_iop_module_t *self,
 
   // FIXME in pipe->type |= DT_DEV_PIXELPIPE_IMAGE mode we currently can't receive data from preview
   // so we at least leave a note to the user
-  if(piece->pipe->type & DT_DEV_PIXELPIPE_IMAGE)
+  if(piece->pipe->type & DT_DEV_PIXELPIPE_IMAGE && !hq)
     dt_control_log(_("inconsistent output"));
 
   // In all other cases we calculate distance_max and A0 here.
