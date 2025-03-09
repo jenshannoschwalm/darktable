@@ -435,8 +435,17 @@ restart:
 
   if(dt_dev_pixelpipe_process(pipe, dev, x, y, wd, ht, scale, devid))
   {
+    const gboolean img_changed = dev->image_force_reload || pipe->loading || pipe->input_changed;
+    const dt_dev_pixelpipe_stopper_t shutdown = dt_atomic_exch_int(&pipe->shutdown, DT_DEV_PIXELPIPE_STOP_NO);
+    if(shutdown != DT_DEV_PIXELPIPE_STOP_NO)
+      dt_print_pipe(DT_DEBUG_PIPE,
+                    shutdown == DT_DEV_PIXELPIPE_STOP_NODES ? "DT_DEV_PIXELPIPE_STOP_NODES shutdown"
+                  : shutdown == DT_DEV_PIXELPIPE_STOP_HQ    ? "DT_DEV_PIXELPIPE_STOP_HQ shutdown"
+                  : "PROCESS shutdown",
+                  pipe, NULL, DT_DEVICE_NONE, NULL, NULL,
+                  "%sshutdown=%d", img_changed ? "image changed, " : "", shutdown);
     // interrupted because image changed?
-    if(dev->image_force_reload || pipe->loading || pipe->input_changed)
+    if(img_changed)
     {
       dt_mipmap_cache_release(&buf);
       dt_control_busy_leave();
@@ -447,12 +456,6 @@ restart:
     // or because the pipeline changed or shutdown?
     else
     {
-      const dt_dev_pixelpipe_stopper_t downer = dt_atomic_exch_int(&pipe->shutdown, DT_DEV_PIXELPIPE_STOP_NO);
-      if(downer)
-        dt_print_pipe(DT_DEBUG_PIPE,  downer == DT_DEV_PIXELPIPE_STOP_NODES ? "DT_DEV_PIXELPIPE_STOP_NODES shutdown"
-                                    : downer == DT_DEV_PIXELPIPE_STOP_HQ    ? "DT_DEV_PIXELPIPE_STOP_HQ shutdown"
-                                    : "PROCESS shutdown",
-          pipe, NULL, DT_DEVICE_NONE, NULL, NULL, "downer=%d", downer);
       if(port && port->widget) dt_control_queue_redraw_widget(port->widget);
       goto restart;
     }
@@ -463,7 +466,11 @@ restart:
   _dev_average_delay_update(&start, &pipe->average_delay);
 
   // maybe we got zoomed/panned in the meantime?
-  if(port && pipe->changed != DT_DEV_PIPE_UNCHANGED) goto restart;
+  if(port && pipe->changed != DT_DEV_PIPE_UNCHANGED)
+  {
+    dt_atomic_set_int(&pipe->shutdown, DT_DEV_PIXELPIPE_STOP_NO);
+    goto restart;
+  }
 
   pipe->status = DT_DEV_PIXELPIPE_VALID;
   pipe->loading = FALSE;
