@@ -691,6 +691,51 @@ void _capture_sharpen(dt_iop_module_t *self,
 
 #if HAVE_OPENCL
 
+int _capture_radius_cl(dt_iop_module_t *self,
+                       dt_dev_pixelpipe_iop_t *const piece,
+                       const cl_mem dev_in,
+                       const int width,
+                       const int height,
+                       const uint8_t (*const xtrans)[6],
+                       const uint32_t filters)
+{
+  dt_dev_pixelpipe_t *pipe = piece->pipe;
+  dt_iop_demosaic_data_t *d = piece->data;
+  dt_iop_demosaic_gui_data_t *g = self->gui_data;
+
+  if(!((g && g->autoradius) || d->cs_radius < 0.01f))
+    return CL_SUCCESS;
+
+  const int devid = piece->pipe->devid;
+  float *in = dt_iop_image_alloc(width, height, 1);
+  if(!in) return CL_MEM_OBJECT_ALLOCATION_FAILURE;
+
+  cl_int err = dt_opencl_copy_device_to_host(devid, in, dev_in, width, height, sizeof(float));
+  if(err == CL_SUCCESS)
+  {
+    const float radius = filters != 9u
+                ? _calcRadiusBayer(in, width, height, 0.01f, 1.0f, filters)
+                : _calcRadiusXtrans(in, width, height, 0.01f, 1.0f, xtrans);
+    const gboolean valid = radius > 0.1f && radius < 1.0f;
+    dt_print_pipe(DT_DEBUG_PIPE, filters != 9u ? "bayer autoradius" : "xtrans autoradius",
+            pipe, self, devid, NULL, NULL, "autoradius=%.2f", radius);
+
+    if(!feqf(radius, d->cs_radius, 0.005f) && valid)
+    {
+      if(g)
+      {
+        dt_control_log(_("calculated radius"));
+        g->autoradius = TRUE;
+      }
+      dt_iop_demosaic_params_t *p = self->params;
+      p->cs_radius = d->cs_radius = radius;
+    }
+    else if(g) g->autoradius = FALSE;
+  }
+  dt_free_align(in);
+  return err;
+}
+
 int _capture_sharpen_cl(dt_iop_module_t *self,
                         dt_dev_pixelpipe_iop_t *const piece,
                         const cl_mem dev_in,
@@ -713,7 +758,6 @@ int _capture_sharpen_cl(dt_iop_module_t *self,
 
   const dt_iop_demosaic_data_t *const d = piece->data;
   dt_iop_demosaic_global_data_t *const gd = self->global_data;
-  dt_iop_demosaic_gui_data_t *g = self->gui_data;
 
   if(pipe->type & DT_DEV_PIXELPIPE_THUMBNAIL)
   {
@@ -730,42 +774,7 @@ int _capture_sharpen_cl(dt_iop_module_t *self,
                                  wbon ? CAPTURE_CFACLIP * dsc->temperature.coeffs[2] : CAPTURE_CFACLIP,
                                  0.0f };
 
-  const gboolean fullpipe = pipe->type & DT_DEV_PIXELPIPE_FULL;
-  const gboolean autoradius = fullpipe && g && g->autoradius;
-  const float old_radius = d->cs_radius;
-  float radius = old_radius;
-  if(autoradius || radius < 0.01f)
-  {
-    float *in = dt_alloc_align_float(pixels);
-    if(in)
-    {
-      if(dt_opencl_copy_device_to_host(devid, in, dev_in, width, height, sizeof(float)) == CL_SUCCESS)
-      {
-        radius = filters != 9u
-                ? _calcRadiusBayer(in, width, height, 0.01f, 1.0f, filters)
-                : _calcRadiusXtrans(in, width, height, 0.01f, 1.0f, xtrans);
-        const gboolean valid = radius > 0.1f && radius < 1.0f;
-        dt_print_pipe(DT_DEBUG_PIPE, filters != 9u ? "bayer autoradius" : "xtrans autoradius",
-            pipe, self, devid, NULL, NULL, "autoradius=%.2f", radius);
-
-        if(!feqf(radius, old_radius, 0.005f) && valid)
-        {
-          if(fullpipe)
-          {
-            if(g)
-            {
-              dt_control_log(_("calculated radius"));
-              g->autoradius = TRUE;
-            }
-            dt_iop_demosaic_params_t *p = self->params;
-            p->cs_radius = radius;
-          }
-        }
-        else if(g) g->autoradius = FALSE;
-      }
-      dt_free_align(in);
-    }
-  }
+  const float radius = d->cs_radius;
 
   cl_mem gcoeffs = NULL;
   cl_mem gauss_idx = NULL;
