@@ -664,6 +664,9 @@ void process(dt_iop_module_t *self,
   const float procmin = dt_iop_get_processed_minimum(piece);
   const int exif_iso = img->exif_iso;
 
+  if(do_capture && fullpipe)
+    _capture_radius(self, piece, in, width, height, xtrans, filters);
+
   if(!direct)
     out = dt_iop_image_alloc(width, height, 4);
 
