@@ -44,6 +44,15 @@
 #define CAPTURE_YMIN 0.001f
 #define CAPTURE_CFACLIP 0.9f
 
+static float _get_variance_threshold(const dt_iop_module_t *self)
+{
+  float threshold = 0.4f;                               // the original default
+  const dt_image_t *img = &self->dev->image_storage;
+  if(img->raw_white_point > 4096) threshold -= 0.07f;   // >= 14bit raws can do better
+  if(img->exif_iso < 200) threshold -= 0.07f;           // low iso images can do so too
+  return threshold;
+}
+
 static inline void _calc_9x9_gauss_coeffs(float *coeffs, const float sigma)
 {
   float kernel[9][9];
@@ -571,9 +580,9 @@ void _capture_sharpen(dt_iop_module_t *self,
   if(autoradius || radius < 0.01f)
   {
     radius = filters != 9u
-              ? _calcRadiusBayer(in, width, height, 0.01f, 1.0f, filters)
-              : _calcRadiusXtrans(in, width, height, 0.01f, 1.0f, xtrans);
-    const gboolean valid = radius > 0.1f && radius < 1.0f;
+              ? _calcRadiusBayer(in, width, height, 0.01f, 0.95f, filters)
+              : _calcRadiusXtrans(in, width, height, 0.01f, 0.95f, xtrans);
+    const gboolean valid = radius > 0.1f && radius < 1.5f;
 
     dt_print_pipe(DT_DEBUG_PIPE, filters != 9u ? "bayer autoradius" : "xtrans autoradius",
       pipe, self, DT_DEVICE_CPU, NULL, NULL, "autoradius=%.2f", radius);
@@ -735,9 +744,9 @@ int _capture_sharpen_cl(dt_iop_module_t *self,
       if(dt_opencl_copy_device_to_host(devid, in, dev_in, width, height, sizeof(float)) == CL_SUCCESS)
       {
         radius = filters != 9u
-                ? _calcRadiusBayer(in, width, height, 0.01f, 1.0f, filters)
-                : _calcRadiusXtrans(in, width, height, 0.01f, 1.0f, xtrans);
-        const gboolean valid = radius > 0.1f && radius < 1.0f;
+                ? _calcRadiusBayer(in, width, height, 0.01f, 0.95f, filters)
+                : _calcRadiusXtrans(in, width, height, 0.01f, 0.95f, xtrans);
+        const gboolean valid = radius > 0.1f && radius < 1.5f;
         dt_print_pipe(DT_DEBUG_PIPE, filters != 9u ? "bayer autoradius" : "xtrans autoradius",
             pipe, self, devid, NULL, NULL, "autoradius=%.2f", radius);
 
