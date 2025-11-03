@@ -164,7 +164,7 @@ dt_iop_colorspace_type_t output_colorspace(dt_iop_module_t *self,
                                            dt_dev_pixelpipe_t *pipe,
                                            dt_dev_pixelpipe_iop_t *piece)
 {
-  return IOP_CS_LAB;
+  return IOP_CS_RGB;
 }
 
 static void _resolve_work_profile(dt_colorspaces_color_profile_type_t *work_type,
@@ -800,24 +800,19 @@ static void _process_cmatrix_bm(dt_iop_module_t *self,
       dt_aligned_pixel_t _xyz;
       dt_apply_transposed_color_matrix(cam, cmatrix, _xyz);
       dt_aligned_pixel_t res;
-      dt_XYZ_to_Lab(_xyz, res);
+      dt_XYZ_to_Rec709_D65(_xyz, res);
       copy_pixel_nontemporal(out, res);
     }
     else
     {
       dt_aligned_pixel_t nRGB;
       dt_apply_transposed_color_matrix(cam, nmatrix, nRGB);
-
-      dt_aligned_pixel_t cRGB;
-      for_each_channel(c)
-      {
-        cRGB[c] = CLAMP(nRGB[c], 0.0f, 1.0f);
-      }
+      dt_vector_clip(nRGB);
 
       dt_aligned_pixel_t XYZ;
-      dt_apply_transposed_color_matrix(cRGB, lmatrix, XYZ);
+      dt_apply_transposed_color_matrix(nRGB, lmatrix, XYZ);
       dt_aligned_pixel_t res;
-      dt_XYZ_to_Lab(XYZ, res);
+      dt_XYZ_to_Rec709_D65(XYZ, res);
       copy_pixel_nontemporal(out, res);
     }
   }
@@ -827,30 +822,14 @@ static void _process_cmatrix_bm(dt_iop_module_t *self,
 static void _cmatrix_fastpath_simple(float *const restrict out,
                                      const float *const restrict in,
                                      size_t npixels,
-                                     const dt_colormatrix_t cmatrix,
                                      const dt_aligned_pixel_t corr)
 {
-  const dt_aligned_pixel_t cmatrix_row0 = { cmatrix[0][0],
-                                            cmatrix[1][0],
-                                            cmatrix[2][0],
-                                            0.0f };
-  const dt_aligned_pixel_t cmatrix_row1 = { cmatrix[0][1],
-                                            cmatrix[1][1],
-                                            cmatrix[2][1],
-                                            0.0f };
-  const dt_aligned_pixel_t cmatrix_row2 = { cmatrix[0][2],
-                                            cmatrix[1][2],
-                                            cmatrix[2][2],
-                                            0.0f };
-
   // this function is called from inside a parallel for loop, so no
   // need for further parallelization
   for(size_t k = 0; k < npixels; k++)
   {
     dt_aligned_pixel_t cam = {in[4*k] * corr[0], in[4*k+1] * corr[1], in[4*k+2] * corr[2],  1.0f};
-    dt_aligned_pixel_t res;
-    dt_RGB_to_Lab(cam, cmatrix_row0, cmatrix_row1, cmatrix_row2, res);
-    copy_pixel_nontemporal(out + 4*k, res);
+    copy_pixel_nontemporal(out + 4*k, cam);
   }
 }
 
@@ -858,7 +837,6 @@ static inline void _cmatrix_fastpath_clipping(float *const restrict out,
                                               const float *const restrict in,
                                               size_t npixels,
                                               const dt_colormatrix_t nmatrix,
-                                              const dt_colormatrix_t lmatrix,
                                               const dt_aligned_pixel_t corr)
 {
   const dt_aligned_pixel_t nmatrix_row0 = { nmatrix[0][0],
@@ -873,18 +851,6 @@ static inline void _cmatrix_fastpath_clipping(float *const restrict out,
                                             nmatrix[1][2],
                                             nmatrix[2][2],
                                             0.0f };
-  const dt_aligned_pixel_t lmatrix_row0 = { lmatrix[0][0],
-                                            lmatrix[1][0],
-                                            lmatrix[2][0],
-                                            0.0f };
-  const dt_aligned_pixel_t lmatrix_row1 = { lmatrix[0][1],
-                                            lmatrix[1][1],
-                                            lmatrix[2][1],
-                                            0.0f };
-  const dt_aligned_pixel_t lmatrix_row2 = { lmatrix[0][2],
-                                            lmatrix[1][2],
-                                            lmatrix[2][2],
-                                            0.0f };
 
   // this function is called from inside a parallel for loop, so no
   // need for further parallelization
@@ -894,9 +860,7 @@ static inline void _cmatrix_fastpath_clipping(float *const restrict out,
     dt_aligned_pixel_t nRGB;
     dt_apply_color_matrix_by_row(cam, nmatrix_row0, nmatrix_row1, nmatrix_row2, nRGB);
     dt_vector_clip(nRGB);
-    dt_aligned_pixel_t res;
-    dt_RGB_to_Lab(nRGB, lmatrix_row0, lmatrix_row1, lmatrix_row2, res);
-    copy_pixel_nontemporal(out + 4*k, res);
+    copy_pixel_nontemporal(out + 4*k, nRGB);
   }
 }
 
@@ -929,15 +893,15 @@ static void process_cmatrix_fastpath(dt_iop_module_t *self,
     size_t end = MIN(start + chunksize, npixels);
     if(clipping)
       _cmatrix_fastpath_clipping(out + 4*start, in + 4*start,
-                                 end-start, d->nmatrix, d->lmatrix, corr);
+                                 end-start, d->nmatrix, corr);
     else
-      _cmatrix_fastpath_simple(out + 4*start, in + 4*start, end-start, d->cmatrix, corr);
+      _cmatrix_fastpath_simple(out + 4*start, in + 4*start, end-start, corr);
   }
 #else // no OpenMP
   if(clipping)
-    _cmatrix_fastpath_clipping(out, in, npixels, d->nmatrix, d->lmatrix, corr);
+    _cmatrix_fastpath_clipping(out, in, npixels, d->nmatrix, corr);
   else
-    _cmatrix_fastpath_simple(out, in, npixels, d->cmatrix, corr);
+    _cmatrix_fastpath_simple(out, in, npixels, corr);
 #endif
   // ensure that all nontemporal writes have been flushed to RAM before we return
   dt_omploop_sfence();
@@ -947,31 +911,15 @@ static void _cmatrix_proper_simple(float *const restrict out,
                                    const float *const restrict in,
                                    size_t npixels,
                                    const dt_iop_colorin_data_t *const d,
-                                   const dt_colormatrix_t cmatrix,
                                    const dt_aligned_pixel_t corr)
 {
-  const dt_aligned_pixel_t cmatrix_row0 = { cmatrix[0][0],
-                                            cmatrix[1][0],
-                                            cmatrix[2][0],
-                                            0.0f };
-  const dt_aligned_pixel_t cmatrix_row1 = { cmatrix[0][1],
-                                            cmatrix[1][1],
-                                            cmatrix[2][1],
-                                            0.0f };
-  const dt_aligned_pixel_t cmatrix_row2 = { cmatrix[0][2],
-                                            cmatrix[1][2],
-                                            cmatrix[2][2],
-                                            0.0f };
-
   // this function is called from inside a parallel for loop, so no
   // need for further parallelization
   for(size_t k = 0; k < npixels; k++)
   {
     dt_aligned_pixel_t cam = {in[4*k] * corr[0], in[4*k+1] * corr[1], in[4*k+2] * corr[2],  1.0f};
     _apply_tone_curves(cam, d);
-    dt_aligned_pixel_t res;
-    dt_RGB_to_Lab(cam, cmatrix_row0, cmatrix_row1, cmatrix_row2, res);
-    copy_pixel_nontemporal(out + 4*k, res);
+    copy_pixel_nontemporal(out + 4*k, cam);
   }
 }
 
@@ -980,7 +928,6 @@ static inline void _cmatrix_proper_clipping(float *const restrict out,
                                             size_t npixels,
                                             const dt_iop_colorin_data_t *const d,
                                             const dt_colormatrix_t nmatrix,
-                                            const dt_colormatrix_t lmatrix,
                                             const dt_aligned_pixel_t corr)
 {
   const dt_aligned_pixel_t nmatrix_row0 = { nmatrix[0][0],
@@ -995,19 +942,6 @@ static inline void _cmatrix_proper_clipping(float *const restrict out,
                                             nmatrix[1][2],
                                             nmatrix[2][2],
                                             0.0f };
-  const dt_aligned_pixel_t lmatrix_row0 = { lmatrix[0][0],
-                                            lmatrix[1][0],
-                                            lmatrix[2][0],
-                                            0.0f };
-  const dt_aligned_pixel_t lmatrix_row1 = { lmatrix[0][1],
-                                            lmatrix[1][1],
-                                            lmatrix[2][1],
-                                            0.0f };
-  const dt_aligned_pixel_t lmatrix_row2 = { lmatrix[0][2],
-                                            lmatrix[1][2],
-                                            lmatrix[2][2],
-                                            0.0f };
-
   // this function is called from inside a parallel for loop, so no need for further parallelization
   for(size_t k = 0; k < npixels; k++)
   {
@@ -1019,10 +953,7 @@ static inline void _cmatrix_proper_clipping(float *const restrict out,
     dt_apply_color_matrix_by_row(cam, nmatrix_row0, nmatrix_row1, nmatrix_row2, nRGB);
     // clip to the gamut colorspace
     dt_vector_clip(nRGB);
-    // convert from gamut colorspace to destination colorspace
-    dt_aligned_pixel_t res;
-    dt_RGB_to_Lab(nRGB, lmatrix_row0, lmatrix_row1, lmatrix_row2, res);
-    copy_pixel_nontemporal(out + 4*k, res);
+    copy_pixel_nontemporal(out + 4*k, nRGB);
   }
 }
 
@@ -1054,16 +985,15 @@ static void process_cmatrix_proper(dt_iop_module_t *self,
     if(start >= npixels) continue;  // handle case when chunksize is < 4*nthreads and last thread has no work
     size_t end = MIN(start + chunksize, npixels);
     if(clipping)
-      _cmatrix_proper_clipping(out + 4*start, in + 4*start,
-                               end-start, d, d->nmatrix, d->lmatrix, corr);
+      _cmatrix_proper_clipping(out + 4*start, in + 4*start, end-start, d, d->nmatrix, corr);
     else
-      _cmatrix_proper_simple(out + 4*start, in + 4*start, end-start, d, d->cmatrix, corr);
+      _cmatrix_proper_simple(out + 4*start, in + 4*start, end-start, d, corr);
   }
 #else
   if(clipping)
-    _cmatrix_proper_clipping(out, in, npixels, d,d->nmatrix, d->lmatrix, corr);
+    _cmatrix_proper_clipping(out, in, npixels, d, d->nmatrix, corr);
   else
-    _cmatrix_proper_simple(out, in, npixels, d, d->cmatrix, corr);
+    _cmatrix_proper_simple(out, in, npixels, d, corr);
 #endif
   // ensure that all nontemporal writes have been flushed to RAM before we return
   dt_omploop_sfence();
