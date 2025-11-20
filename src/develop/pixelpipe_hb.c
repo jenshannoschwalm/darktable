@@ -881,9 +881,6 @@ static void _pixelpipe_picker(dt_iop_module_t *module,
                         picker_source, box);
   if(!nobox)
   {
-    const dt_iop_order_iccprofile_info_t *const profile =
-      dt_ioppr_get_pipe_current_profile_info(module, piece->pipe);
-
     dt_print_pipe(DT_DEBUG_PIPE | DT_DEBUG_PICKER,
                   picker_source == PIXELPIPE_PICKER_INPUT
                     ? "pixelpipe IN picker"
@@ -902,7 +899,8 @@ static void _pixelpipe_picker(dt_iop_module_t *module,
     dt_color_picker_helper(dsc, pixel, roi, box,
                            darktable.lib->proxy.colorpicker.primary_sample->denoise,
                            pick, image_cst,
-                           dt_iop_color_picker_get_active_cst(module), profile);
+                           dt_iop_color_picker_get_active_cst(module),
+                           dt_ioppr_get_pipe_current_profile_info(module, piece->pipe));
   }
 
   for_four_channels(k)
@@ -1005,14 +1003,11 @@ static void _pixelpipe_picker_cl(const int devid,
   box[3] = region[1];
 
   lib_colorpicker_stats pick;
-
-  const dt_iop_order_iccprofile_info_t *const profile =
-    dt_ioppr_get_pipe_current_profile_info(module, piece->pipe);
-
   dt_color_picker_helper(dsc, pixel, &roi_copy, box,
                          darktable.lib->proxy.colorpicker.primary_sample->denoise,
                          pick, image_cst,
-                         dt_iop_color_picker_get_active_cst(module), profile);
+                         dt_iop_color_picker_get_active_cst(module),
+                         dt_ioppr_get_pipe_current_profile_info(module, piece->pipe));
 
   for_four_channels(k)
   {
