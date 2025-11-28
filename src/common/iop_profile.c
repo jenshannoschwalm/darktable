@@ -22,6 +22,7 @@
 #include "common/debug.h"
 #include "common/imagebuf.h"
 #include "common/matrices.h"
+#include "control/control.h"
 #include "develop/imageop.h"
 #include "develop/imageop_math.h"
 #include "develop/pixelpipe.h"
@@ -976,7 +977,7 @@ dt_iop_order_iccprofile_info_t *dt_ioppr_get_pipe_output_profile_info(const stru
 }
 
 dt_iop_order_iccprofile_info_t *dt_ioppr_get_pipe_current_profile_info(const dt_iop_module_t *module,
-                                                                       struct dt_dev_pixelpipe_t *pipe)
+                                                                       const struct dt_dev_pixelpipe_t *pipe)
 {
   dt_iop_order_iccprofile_info_t *restrict color_profile;
 
@@ -985,7 +986,17 @@ dt_iop_order_iccprofile_info_t *dt_ioppr_get_pipe_current_profile_info(const dt_
   const int current_module_order = module->iop_order;
 
   if(current_module_order < colorin_order)
+  {
     color_profile = dt_ioppr_get_pipe_input_profile_info(pipe);
+    if(color_profile->filename[0]
+      && (!dt_is_valid_colormatrix(color_profile->matrix_in[0][0])
+          || !dt_is_valid_colormatrix(color_profile->matrix_out[0][0])))
+    {
+      dt_print(DT_DEBUG_PIPE, "'%s' misses matrix in `%s'", module->name(), color_profile->filename);
+      if(pipe->type & DT_DEV_PIXELPIPE_PREVIEW)
+        dt_control_log(_("'%s' misses matrix in '%s'"), module->name(), color_profile->filename);
+    }
+  }
   else if(current_module_order < colorout_order)
     color_profile = dt_ioppr_get_pipe_work_profile_info(pipe);
   else
