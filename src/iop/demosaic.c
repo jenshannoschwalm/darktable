@@ -1,6 +1,6 @@
 /*
     This file is part of darktable,
-    Copyright (C) 2010-2025 darktable developers.
+    Copyright (C) 2010-2026 darktable developers.
 
     darktable is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -743,7 +743,7 @@ void process(dt_iop_module_t *self,
     if(_noise_requested(self, piece))
       _capture_noise(self, piece);
     if(_radius_requested(self, piece))
-      _capture_radius(self, piece, in, width, height, xtrans, filters);
+      _capture_radius(self, piece, in, roi_in, xtrans, filters);
   }
 
   int overlap = 0;
@@ -1039,7 +1039,7 @@ int process_cl(dt_iop_module_t *self,
     if(_noise_requested(self, piece))
       _capture_noise(self, piece);
     if(_radius_requested(self, piece))
-      _capture_radius_cl(self, piece, dev_in, iwidth, iheight, xtrans, filters, true_monochrome);
+      _capture_radius_cl(self, piece, dev_in, roi_in, xtrans, filters, true_monochrome);
   }
 
   gboolean tiling = FALSE;
