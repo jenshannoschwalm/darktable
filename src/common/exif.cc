@@ -1202,7 +1202,7 @@ static int _check_forward_matrix(Exiv2::ExifData &exifData,
   // We only want a valid forward matrix if we got an illu and matrix are good
   const gboolean has_forward_illuminant = sel_illu >= 0 && sel_illu < 3 && has_FM[sel_illu];
   if(!has_forward_illuminant)
-    return -1;
+    return sel_illu;
 
   // CameraToXYZ = ForwardMatrix * Inverse(AnalogBalance * CameraCalibration)
   // (white balance D is applied later, upstream, via temperature.iop's wb_coeffs)
@@ -1228,7 +1228,7 @@ static int _check_forward_matrix(Exiv2::ExifData &exifData,
     _print_matrix_data(has_CC[sel_illu] ? "calibration matrix" : "ident calibration matrix", 0, CC[sel_illu]);
     return sel_illu;
   }
-  return -1;
+  return sel_illu;
 }
 
 static void _check_profile_look_table(Exiv2::ExifData &exifData,
