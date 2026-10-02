@@ -1,0 +1,217 @@
+/*
+    This file is part of darktable,
+    Copyright (C) 2026 darktable developers.
+
+    darktable is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    darktable is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with darktable.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include <setjmp.h>
+#include <stdarg.h>
+#include <stddef.h>
+
+#include <cmocka.h>
+
+#include "iop/dng_look.c"
+#include "common/iop_order.h"
+
+#ifdef _WIN32
+#include "win/main_wrapper.h"
+#endif
+
+static void test_interpolation_and_hue_wrap(void **state)
+{
+  float table[24];
+  for(int v = 0; v < 2; v++)
+    for(int h = 0; h < 2; h++)
+      for(int s = 0; s < 2; s++)
+      {
+        const int index = 3 * ((v * 2 + h) * 2 + s);
+        table[index] = 100.0f * v + 10.0f * h + s;
+        table[index + 1] = 1.0f + s;
+        table[index + 2] = 1.0f + v;
+      }
+  const dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 2, .sat_div = 2, .val_div = 2 };
+  dt_aligned_pixel_t hsv = { 0.25f, 0.5f, 0.5f, 0.0f };
+  dt_aligned_pixel_t correction;
+  _lookup_hsm(&d, hsv, correction);
+  assert_float_equal(correction[0], 55.5f, 1e-6f);
+  assert_float_equal(correction[1], 1.5f, 1e-6f);
+  assert_float_equal(correction[2], 1.5f, 1e-6f);
+
+  hsv[0] = 0.875f;
+  _lookup_hsm(&d, hsv, correction);
+  assert_float_equal(correction[0], 53.0f, 1e-6f);
+  hsv[0] = -0.125f;
+  _lookup_hsm(&d, hsv, correction);
+  assert_float_equal(correction[0], 53.0f, 1e-6f);
+
+  hsv[0] = 1.0f;
+  hsv[1] = 2.0f;
+  hsv[2] = -1.0f;
+  _lookup_hsm(&d, hsv, correction);
+  assert_float_equal(correction[0], 1.0f, 1e-6f);
+  assert_float_equal(correction[1], 2.0f, 1e-6f);
+  assert_float_equal(correction[2], 1.0f, 1e-6f);
+}
+
+static void test_tone_curve(void **state)
+{
+  dt_iop_dng_look_data_t d = { 0 };
+  const float curve[] = { 0.2f, 0.1f, 0.5f, 0.7f, 0.8f, 0.9f };
+  assert_true(_build_tone_curve(&d, curve, 3));
+  assert_float_equal(_apply_tone_curve(&d, -1.0f), 0.1f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(&d, 2.0f), 0.9f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(&d, 0.35f), 0.4f, 1e-6f);
+  for(int i = 1; i < DNG_LOOK_TONE_SAMPLES; i++)
+    assert_true(d.tone_curve[i] >= d.tone_curve[i - 1]);
+
+  const float duplicate_x[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+  const float decreasing_y[] = { 0.0f, 1.0f, 1.0f, 0.0f };
+  const float nonfinite[] = { 0.0f, 0.0f, NAN, 1.0f };
+  assert_false(_build_tone_curve(&d, duplicate_x, 2));
+  assert_false(_build_tone_curve(&d, decreasing_y, 2));
+  assert_false(_build_tone_curve(&d, nonfinite, 2));
+  assert_false(_build_tone_curve(&d, curve, 1));
+  assert_false(_build_tone_curve(&d, NULL, 3));
+}
+
+static void test_processing(void **state)
+{
+  float table[] = { 120.0f, 0.5f, 0.5f, 120.0f, 0.5f, 0.5f };
+  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
+  dt_iop_module_t module = { 0 };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4 };
+  const dt_iop_roi_t roi = { .width = 1, .height = 2, .scale = 1.0f };
+  const float DT_ALIGNED_ARRAY in[] = { 1.0f, 0.0f, 0.0f, 0.37f, 0.4f, 0.4f, 0.4f, 0.81f };
+  float DT_ALIGNED_ARRAY out[8];
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_float_equal(out[0], 0.25f, 1e-6f);
+  assert_float_equal(out[1], 0.5f, 1e-6f);
+  assert_float_equal(out[2], 0.25f, 1e-6f);
+  assert_float_equal(out[3], in[3], 1e-6f);
+  for(int c = 0; c < 3; c++)
+    assert_float_equal(out[4 + c], 0.2f, 1e-6f);
+  assert_float_equal(out[7], in[7], 1e-6f);
+
+  const float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
+  d.has_tone_curve = _build_tone_curve(&d, curve, 2);
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_float_equal(out[0], 0.125f, 1e-6f);
+  assert_float_equal(out[1], 0.25f, 1e-6f);
+  assert_float_equal(out[2], 0.125f, 1e-6f);
+  assert_float_equal(out[3], in[3], 1e-6f);
+
+  d.hsm = NULL;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_float_equal(out[0], 0.5f, 1e-6f);
+  assert_float_equal(out[1], 0.0f, 1e-6f);
+  assert_float_equal(out[2], 0.0f, 1e-6f);
+  d.has_tone_curve = FALSE;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(in));
+}
+
+static void test_commit_and_defaults(void **state)
+{
+  dt_develop_t dev = { 0 };
+  dt_iop_module_t module = { .dev = &dev };
+  dt_dev_pixelpipe_t pipe = { 0 };
+  dt_dev_pixelpipe_iop_t piece = { .colors = 4 };
+  init_pipe(&module, &pipe, &piece);
+  dt_iop_dng_look_data_t *d = piece.data;
+  reload_defaults(&module);
+  assert_false(module.default_enabled);
+
+  float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
+  const float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+  dev.image_storage.profile_hsm_data = table;
+  dev.image_storage.profile_hsm_hue_div = 1;
+  dev.image_storage.profile_hsm_sat_div = 2;
+  dev.image_storage.profile_hsm_val_div = 1;
+  dev.image_storage.profile_tone_curve = (float *)curve;
+  dev.image_storage.profile_tone_curve_points = 2;
+  reload_defaults(&module);
+  assert_true(module.default_enabled);
+  commit_params(&module, NULL, &pipe, &piece);
+  assert_non_null(d->hsm);
+  assert_ptr_not_equal(d->hsm, table);
+  assert_memory_equal(d->hsm, table, sizeof(table));
+  assert_true(d->has_tone_curve);
+  assert_false(piece.process_cl_ready);
+  table[0] = 60.0f;
+  assert_float_equal(d->hsm[0], 0.0f, 1e-6f);
+
+  dev.image_storage.profile_hsm_hue_div = G_MAXINT;
+  commit_params(&module, NULL, &pipe, &piece);
+  assert_null(d->hsm);
+  assert_true(d->has_tone_curve);
+  dev.image_storage.profile_hsm_hue_div = 1;
+  table[1] = NAN;
+  commit_params(&module, NULL, &pipe, &piece);
+  assert_null(d->hsm);
+  table[1] = -1.0f;
+  commit_params(&module, NULL, &pipe, &piece);
+  assert_null(d->hsm);
+
+  dev.image_storage.profile_hsm_data = NULL;
+  dev.image_storage.profile_tone_curve = NULL;
+  commit_params(&module, NULL, &pipe, &piece);
+  assert_null(d->hsm);
+  assert_false(d->has_tone_curve);
+  reload_defaults(&module);
+  assert_false(module.default_enabled);
+  cleanup_pipe(&module, &pipe, &piece);
+  assert_null(piece.data);
+}
+
+static void test_module_order(void **state)
+{
+  for(int version = DT_IOP_ORDER_LEGACY; version < DT_IOP_ORDER_LAST; version++)
+  {
+    GList *list = dt_ioppr_get_iop_order_list_version(version);
+    assert_non_null(list);
+    gboolean found = FALSE;
+    for(const GList *l = list; l; l = l->next)
+    {
+      const dt_iop_order_entry_t *entry = l->data;
+      if(!strcmp(entry->operation, "colorin"))
+      {
+        assert_non_null(l->next);
+        entry = l->next->data;
+        assert_string_equal(entry->operation, "dng_look");
+        found = TRUE;
+        break;
+      }
+    }
+    assert_true(found);
+    g_list_free_full(list, free);
+  }
+}
+
+int main(int argc, char *argv[])
+{
+  const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_interpolation_and_hue_wrap),
+    cmocka_unit_test(test_tone_curve),
+    cmocka_unit_test(test_processing),
+    cmocka_unit_test(test_commit_and_defaults),
+    cmocka_unit_test(test_module_order),
+  };
+  return cmocka_run_group_tests(tests, NULL, NULL);
+}
+// clang-format off
+// modelines: These editor modelines have been set for all relevant files by tools/update_modelines.py
+// vim: shiftwidth=2 expandtab tabstop=2 cindent
+// kate: tab-indents: off; indent-width 2; replace-tabs on; indent-mode cstyle; remove-trailing-spaces modified;
+// clang-format on
