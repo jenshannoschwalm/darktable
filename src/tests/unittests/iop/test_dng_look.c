@@ -117,7 +117,9 @@ static void test_processing(void **state)
   float table[] = { 120.0f, 0.5f, 0.5f, 120.0f, 0.5f, 0.5f };
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
   dt_iop_module_t module = { 0 };
-  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4 };
+  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
   const dt_iop_roi_t roi = { .width = 1, .height = 2, .scale = 1.0f };
   const float DT_ALIGNED_ARRAY in[] = { 1.0f, 0.0f, 0.0f, 0.37f, 0.4f, 0.4f, 0.4f, 0.81f };
   float DT_ALIGNED_ARRAY out[8];
@@ -137,6 +139,15 @@ static void test_processing(void **state)
   assert_float_equal(out[1], 0.25f, 1e-6f);
   assert_float_equal(out[2], 0.125f, 1e-6f);
   assert_float_equal(out[3], in[3], 1e-6f);
+
+  profile.type = DT_COLORSPACE_EMBEDDED_MATRIX;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(in));
+  pipe.input_profile_info = NULL;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(in));
+  profile.type = DT_COLORSPACE_FORWARD_MATRIX;
+  pipe.input_profile_info = &profile;
 
   d.hsm = NULL;
   process(&module, &piece, in, out, &roi, &roi);
@@ -168,7 +179,7 @@ static void test_commit_and_defaults(void **state)
   dev.image_storage.profile_tone_curve = (float *)curve;
   dev.image_storage.profile_tone_curve_points = 2;
   reload_defaults(&module);
-  assert_true(module.default_enabled);
+  assert_false(module.default_enabled);
   commit_params(&module, NULL, &pipe, &piece);
   assert_non_null(d->hsm);
   assert_ptr_not_equal(d->hsm, table);
@@ -199,6 +210,94 @@ static void test_commit_and_defaults(void **state)
   assert_false(module.default_enabled);
   cleanup_pipe(&module, &pipe, &piece);
   assert_null(piece.data);
+}
+
+static void *_colorin_get_p(const void *params, const char *name)
+{
+  assert_string_equal(name, "type");
+  return (void *)params;
+}
+
+static void test_automatic_enablement(void **state)
+{
+  dt_colorspaces_color_profile_type_t type = DT_COLORSPACE_FORWARD_MATRIX;
+  dt_colorspaces_color_profile_type_t stale_type = DT_COLORSPACE_EMBEDDED_MATRIX;
+  dt_iop_module_so_t colorin_so = { .op = "colorin" };
+  dt_iop_module_t colorin = { .so = &colorin_so, .get_p = _colorin_get_p,
+                             .default_params = &type, .params = &stale_type,
+                             .default_enabled = TRUE };
+  dt_develop_t dev = { 0 };
+  dev.iop = g_list_append(NULL, &colorin);
+  dt_iop_dng_look_params_t defaults = { 0 };
+  dt_iop_dng_look_params_t history_params = { 0 };
+  dt_iop_module_t module = { .dev = &dev, .default_params = &defaults };
+  dt_dev_pixelpipe_t pipe = { 0 };
+  dt_dev_pixelpipe_iop_t piece = { 0 };
+  init_pipe(&module, &pipe, &piece);
+
+  float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
+  float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+  dev.image_storage.profile_hsm_hue_div = 1;
+  dev.image_storage.profile_hsm_sat_div = 2;
+  dev.image_storage.profile_hsm_val_div = 1;
+  dev.image_storage.profile_tone_curve_points = 2;
+
+  for(int matrix = 0; matrix < 2; matrix++)
+    for(int forward = 0; forward < 2; forward++)
+      for(int data = 0; data < 4; data++)
+      {
+        if(matrix)
+          dev.image_storage.dng_forward_matrix[0] = 1.0f;
+        else
+          dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
+        type = forward ? DT_COLORSPACE_FORWARD_MATRIX : DT_COLORSPACE_EMBEDDED_MATRIX;
+        stale_type = forward ? DT_COLORSPACE_EMBEDDED_MATRIX : DT_COLORSPACE_FORWARD_MATRIX;
+        dev.image_storage.profile_hsm_data = data & 1 ? table : NULL;
+        dev.image_storage.profile_tone_curve = data & 2 ? curve : NULL;
+        module.default_enabled = TRUE;
+        reload_defaults(&module);
+        assert_false(module.default_enabled);
+        commit_params(&module, module.default_params, &pipe, &piece);
+        assert_int_equal(piece.enabled, matrix && forward && data != 0);
+      }
+
+  type = DT_COLORSPACE_FORWARD_MATRIX;
+  dt_colorspaces_color_profile_type_t embedded = DT_COLORSPACE_EMBEDDED_MATRIX;
+  dt_dev_history_item_t hist1 = { .module = &colorin, .params = &embedded, .enabled = TRUE };
+  dt_dev_history_item_t hist2 = { .module = &colorin, .params = &type, .enabled = TRUE };
+  dev.history = g_list_append(NULL, &hist1);
+  dev.history = g_list_append(dev.history, &hist2);
+  dev.history_end = 1;
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  dev.history_end = 2;
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_true(piece.enabled);
+  hist2.enabled = FALSE;
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  hist2.enabled = TRUE;
+
+  piece.enabled = FALSE;
+  commit_params(&module, &history_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  piece.enabled = TRUE;
+  commit_params(&module, &history_params, &pipe, &piece);
+  assert_true(piece.enabled);
+
+  colorin.get_p = NULL;
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  g_list_free(dev.iop);
+  dev.iop = NULL;
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+
+  assert_true(flags() & IOP_FLAGS_HIDDEN);
+  assert_true(flags() & IOP_FLAGS_ONE_INSTANCE);
+  assert_true(flags() & IOP_FLAGS_ALLOW_TILING);
+  cleanup_pipe(&module, &pipe, &piece);
+  g_list_free(dev.history);
 }
 
 static void test_module_order(void **state)
@@ -261,6 +360,7 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_tone_curve),
     cmocka_unit_test(test_processing),
     cmocka_unit_test(test_commit_and_defaults),
+    cmocka_unit_test(test_automatic_enablement),
     cmocka_unit_test(test_module_order),
     cmocka_unit_test(test_cache_snapshot),
   };

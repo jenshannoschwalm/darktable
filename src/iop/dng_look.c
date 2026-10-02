@@ -18,6 +18,7 @@
 
 #include "common/colorspaces_inline_conversions.h"
 #include "common/image_cache.h"
+#include "common/iop_profile.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "gui/gtk.h"
@@ -47,7 +48,7 @@ const char *name()
 
 int flags()
 {
-  return IOP_FLAGS_ONE_INSTANCE | IOP_FLAGS_ALLOW_TILING;
+  return IOP_FLAGS_HIDDEN | IOP_FLAGS_ONE_INSTANCE | IOP_FLAGS_ALLOW_TILING;
 }
 
 int default_group()
@@ -64,9 +65,33 @@ dt_iop_colorspace_type_t default_colorspace(dt_iop_module_t *self,
 
 void reload_defaults(dt_iop_module_t *self)
 {
-  const dt_image_t *img = &self->dev->image_storage;
-  // gate on embedded data, not colorin params: defaults and history commit in different orders
-  self->default_enabled = img->profile_hsm_data != NULL || img->profile_tone_curve != NULL;
+  // defaults load before colorin and this image's history (develop.c:2458)
+  // stay off here; enable the hidden pipe piece in commit_params once history is available
+  self->default_enabled = FALSE;
+}
+
+static gboolean _forward_matrix_selected(const dt_develop_t *dev)
+{
+  const dt_iop_module_t *colorin = dt_iop_get_module_from_list(dev->iop, "colorin");
+  if(!colorin || !colorin->get_p || !colorin->default_params)
+    return FALSE;
+
+  const dt_iop_params_t *params = colorin->default_params;
+  gboolean enabled = colorin->default_enabled;
+  const GList *history = dev->history;
+  for(int i = 0; i < dev->history_end && history; i++, history = history->next)
+  {
+    const dt_dev_history_item_t *hist = history->data;
+    if(hist->module == colorin)
+    {
+      params = hist->params;
+      enabled = hist->enabled;
+    }
+  }
+
+  const dt_colorspaces_color_profile_type_t *type =
+    params ? colorin->get_p(params, "type") : NULL;
+  return enabled && type && *type == DT_COLORSPACE_FORWARD_MATRIX;
 }
 
 static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
@@ -157,7 +182,20 @@ void commit_params(dt_iop_module_t *self,
   const gboolean cached = dt_is_valid_imgid(imgid);
   const dt_image_t *img = cached ? dt_image_cache_get(imgid, 'r') : &self->dev->image_storage;
   if(!img)
+  {
+    piece->enabled = FALSE;
     return;
+  }
+
+  // forward-matrix presence alone is not a trust signal: Pixel 7a looks can render badly here
+  // require the selected forward-matrix color pipeline, not just available metadata
+  // pipe sync holds history_mutex, and the last active history entry wins regardless of commit order
+  const gboolean enabled =
+    dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
+    && _forward_matrix_selected(self->dev)
+    && (img->profile_hsm_data != NULL || img->profile_tone_curve != NULL);
+  // auto-enable defaults, but preserve an explicit disable recorded in history
+  piece->enabled = enabled && (params == self->default_params || piece->enabled);
 
   if(img->profile_hsm_data && img->profile_hsm_hue_div >= 1
      && img->profile_hsm_sat_div >= 2 && img->profile_hsm_val_div >= 1
@@ -202,7 +240,12 @@ void process(dt_iop_module_t *self,
     return;
 
   const dt_iop_dng_look_data_t *d = piece->data;
-  if(!d->hsm && !d->has_tone_curve)
+  // synch_top can change only colorin: never apply a stale look after switching away
+  // switching to forward matrix while this piece is disabled waits for the next full pipe sync
+  const dt_iop_order_iccprofile_info_t *input_profile =
+    dt_ioppr_get_pipe_input_profile_info(piece->pipe);
+  if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX
+     || (!d->hsm && !d->has_tone_curve))
   {
     memcpy(ovoid, ivoid, (size_t)4 * roi_out->width * roi_out->height * sizeof(float));
     return;
