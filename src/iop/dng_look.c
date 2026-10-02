@@ -24,13 +24,14 @@
 #include "gui/gtk.h"
 #include "iop/iop_api.h"
 
-DT_MODULE_INTROSPECTION(1, dt_iop_dng_look_params_t)
+DT_MODULE_INTROSPECTION(2, dt_iop_dng_look_params_t)
 
 #define DNG_LOOK_TONE_SAMPLES 1024
 
 typedef struct dt_iop_dng_look_params_t
 {
   int reserved; // $DEFAULT: 0
+  float tone_curve_mix; // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.6 $DESCRIPTION: "tone curve strength"
 } dt_iop_dng_look_params_t;
 
 typedef struct dt_iop_dng_look_data_t
@@ -40,6 +41,34 @@ typedef struct dt_iop_dng_look_data_t
   gboolean has_tone_curve;
   float tone_curve[DNG_LOOK_TONE_SAMPLES];
 } dt_iop_dng_look_data_t;
+
+int legacy_params(dt_iop_module_t *self,
+                  const void *const old_params,
+                  const int old_version,
+                  void **new_params,
+                  int32_t *new_params_size,
+                  int *new_version)
+{
+  if(old_version == 1)
+  {
+    typedef struct dt_iop_dng_look_params_v1_t
+    {
+      int reserved;
+    } dt_iop_dng_look_params_v1_t;
+
+    const dt_iop_dng_look_params_v1_t *o = old_params;
+    dt_iop_dng_look_params_t *n = calloc(1, sizeof(dt_iop_dng_look_params_t));
+    n->reserved = o->reserved;
+    // preserve the full-strength curve in existing edits
+    n->tone_curve_mix = 1.0f;
+
+    *new_params = n;
+    *new_params_size = sizeof(dt_iop_dng_look_params_t);
+    *new_version = 2;
+    return 0;
+  }
+  return 1;
+}
 
 const char *name()
 {
@@ -65,8 +94,7 @@ dt_iop_colorspace_type_t default_colorspace(dt_iop_module_t *self,
 
 void reload_defaults(dt_iop_module_t *self)
 {
-  // defaults load before colorin and this image's history (develop.c:2458)
-  // stay off here; enable the hidden pipe piece in commit_params once history is available
+  // defer enablement until history is available (develop.c:2458)
   self->default_enabled = FALSE;
 }
 
@@ -97,7 +125,8 @@ static gboolean _forward_matrix_selected(const dt_develop_t *dev)
 
 static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
                                   const float *curve,
-                                  const int points)
+                                  const int points,
+                                  const float tone_curve_mix)
 {
   if(!curve || points < 2 || points > G_MAXINT / 2)
     return FALSE;
@@ -121,8 +150,10 @@ static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
     const float y0 = curve[2 * segment + 1];
     const float x1 = curve[2 * (segment + 1)];
     const float y1 = curve[2 * (segment + 1) + 1];
-    const float t = CLAMP((x - x0) / (x1 - x0), 0.0f, 1.0f);
-    d->tone_curve[i] = y0 + t * (y1 - y0);
+    const float t = CLIP((x - x0) / (x1 - x0));
+    const float y = y0 + t * (y1 - y0);
+    // full vendor curves compound contrast with downstream filmic or tonemapping
+    d->tone_curve[i] = tone_curve_mix == 1.0f ? y : x + tone_curve_mix * (y - x);
   }
   return TRUE;
 }
@@ -132,24 +163,24 @@ static void _lookup_hsm(const dt_iop_dng_look_data_t *d,
                         dt_aligned_pixel_t correction)
 {
   const float h = (hsv[0] - floorf(hsv[0])) * d->hue_div;
-  const float s = CLAMP(hsv[1], 0.0f, 1.0f) * (d->sat_div - 1);
-  const float v = CLAMP(hsv[2], 0.0f, 1.0f) * (d->val_div - 1);
+  const float s = CLIP(hsv[1]) * (d->sat_div - 1);
+  const float v = CLIP(hsv[2]) * (d->val_div - 1);
   const int hi[2] = { MIN((int)h, d->hue_div - 1),
                      (MIN((int)h, d->hue_div - 1) + 1) % d->hue_div };
   const int si[2] = { MIN((int)s, d->sat_div - 1),
                      MIN((int)s + 1, d->sat_div - 1) };
   const int vi[2] = { MIN((int)v, d->val_div - 1),
                      MIN((int)v + 1, d->val_div - 1) };
-  const float hf = CLAMP(h - hi[0], 0.0f, 1.0f);
-  const float sf = CLAMP(s - si[0], 0.0f, 1.0f);
-  const float vf = CLAMP(v - vi[0], 0.0f, 1.0f);
+  const float hf = CLIP(h - hi[0]);
+  const float sf = CLIP(s - si[0]);
+  const float vf = CLIP(v - vi[0]);
 
   correction[0] = correction[1] = correction[2] = 0.0f;
   for(int z = 0; z < 2; z++)
     for(int y = 0; y < 2; y++)
       for(int x = 0; x < 2; x++)
       {
-        // DNG stores saturation fastest, then hue, then value, with three floats per cell
+        // DNG storage order: saturation fastest, then hue, then value
         const size_t index = 3 * (((size_t)vi[z] * d->hue_div + hi[y]) * d->sat_div + si[x]);
         const float weight = (z ? vf : 1.0f - vf)
                            * (y ? hf : 1.0f - hf)
@@ -161,7 +192,7 @@ static void _lookup_hsm(const dt_iop_dng_look_data_t *d,
 
 static float _apply_tone_curve(const dt_iop_dng_look_data_t *d, const float value)
 {
-  const float x = CLAMP(value, 0.0f, 1.0f) * (DNG_LOOK_TONE_SAMPLES - 1);
+  const float x = CLIP(value) * (DNG_LOOK_TONE_SAMPLES - 1);
   const int i = MIN((int)x, DNG_LOOK_TONE_SAMPLES - 2);
   return d->tone_curve[i] + (x - i) * (d->tone_curve[i + 1] - d->tone_curve[i]);
 }
@@ -171,6 +202,7 @@ void commit_params(dt_iop_module_t *self,
                    dt_dev_pixelpipe_t *pipe,
                    dt_dev_pixelpipe_iop_t *piece)
 {
+  const dt_iop_dng_look_params_t *p = params;
   dt_iop_dng_look_data_t *d = piece->data;
   g_free(d->hsm);
   d->hsm = NULL;
@@ -188,9 +220,8 @@ void commit_params(dt_iop_module_t *self,
     return;
   }
 
-  // forward-matrix presence alone is not a trust signal: Pixel 7a looks can render badly here
-  // require the selected forward-matrix color pipeline, not just available metadata
-  // pipe sync holds history_mutex, and the last active history entry wins regardless of commit order
+  // require the selected forward-matrix pipeline, not just available metadata
+  // pipe sync holds history_mutex; the last active history entry wins
   const gboolean enabled =
     dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
     && _forward_matrix_selected(self->dev)
@@ -226,7 +257,9 @@ void commit_params(dt_iop_module_t *self,
       }
     }
   }
-  d->has_tone_curve = _build_tone_curve(d, img->profile_tone_curve, img->profile_tone_curve_points);
+  d->has_tone_curve = _build_tone_curve(d, img->profile_tone_curve,
+                                       img->profile_tone_curve_points, p->tone_curve_mix)
+                      && p->tone_curve_mix > 0.0f;
   if(cached)
     dt_image_cache_read_release(img);
 }
@@ -243,7 +276,6 @@ void process(dt_iop_module_t *self,
 
   const dt_iop_dng_look_data_t *d = piece->data;
   // synch_top can change only colorin: never apply a stale look after switching away
-  // switching to forward matrix while this piece is disabled waits for the next full pipe sync
   const dt_iop_order_iccprofile_info_t *input_profile =
     dt_ioppr_get_pipe_input_profile_info(piece->pipe);
   if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX
@@ -276,8 +308,10 @@ void process(dt_iop_module_t *self,
           _lookup_hsm(d, hsv, correction);
           hsv[0] += correction[0] / 360.0f;
           hsv[0] -= floorf(hsv[0]);
-          hsv[1] = CLAMP(hsv[1] * correction[1], 0.0f, 1.0f);
-          hsv[2] = CLAMP(hsv[2] * correction[2], 0.0f, 1.0f);
+          // cap the scale to avoid compounding saturation with the tone curve
+          correction[1] = CLAMP(correction[1], 0.0f, 1.3f);
+          hsv[1] = CLIP(hsv[1] * correction[1]);
+          hsv[2] = CLIP(hsv[2] * correction[2]);
           dt_HSV_2_RGB(hsv, rgb);
         }
         if(d->has_tone_curve)

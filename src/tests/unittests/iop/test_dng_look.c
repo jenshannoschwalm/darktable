@@ -22,6 +22,8 @@
 
 #include <cmocka.h>
 
+#include "common/tonemapper_helpers.h"
+
 #define dt_image_cache_get __wrap_dt_image_cache_get
 #define dt_image_cache_read_release __wrap_dt_image_cache_read_release
 
@@ -95,21 +97,31 @@ static void test_tone_curve(void **state)
 {
   dt_iop_dng_look_data_t d = { 0 };
   const float curve[] = { 0.2f, 0.1f, 0.5f, 0.7f, 0.8f, 0.9f };
-  assert_true(_build_tone_curve(&d, curve, 3));
+  assert_true(_build_tone_curve(&d, curve, 3, 1.0f));
   assert_float_equal(_apply_tone_curve(&d, -1.0f), 0.1f, 1e-6f);
   assert_float_equal(_apply_tone_curve(&d, 2.0f), 0.9f, 1e-6f);
   assert_float_equal(_apply_tone_curve(&d, 0.35f), 0.4f, 1e-6f);
   for(int i = 1; i < DNG_LOOK_TONE_SAMPLES; i++)
     assert_true(d.tone_curve[i] >= d.tone_curve[i - 1]);
 
+  assert_true(_build_tone_curve(&d, curve, 3, 0.6f));
+  assert_float_equal(_apply_tone_curve(&d, 0.0f), 0.06f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(&d, 1.0f), 0.94f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(&d, 0.35f), 0.38f, 1e-6f);
+
+  assert_true(_build_tone_curve(&d, curve, 3, 0.0f));
+  for(int i = 0; i < DNG_LOOK_TONE_SAMPLES; i++)
+    assert_float_equal(d.tone_curve[i], (float)i / (DNG_LOOK_TONE_SAMPLES - 1), 1e-6f);
+  assert_float_equal(_apply_tone_curve(&d, 0.35f), 0.35f, 1e-6f);
+
   const float duplicate_x[] = { 0.0f, 0.0f, 0.0f, 1.0f };
   const float decreasing_y[] = { 0.0f, 1.0f, 1.0f, 0.0f };
   const float nonfinite[] = { 0.0f, 0.0f, NAN, 1.0f };
-  assert_false(_build_tone_curve(&d, duplicate_x, 2));
-  assert_false(_build_tone_curve(&d, decreasing_y, 2));
-  assert_false(_build_tone_curve(&d, nonfinite, 2));
-  assert_false(_build_tone_curve(&d, curve, 1));
-  assert_false(_build_tone_curve(&d, NULL, 3));
+  assert_false(_build_tone_curve(&d, duplicate_x, 2, 0.6f));
+  assert_false(_build_tone_curve(&d, decreasing_y, 2, 0.6f));
+  assert_false(_build_tone_curve(&d, nonfinite, 2, 0.6f));
+  assert_false(_build_tone_curve(&d, curve, 1, 0.6f));
+  assert_false(_build_tone_curve(&d, NULL, 3, 0.6f));
 }
 
 static void test_processing(void **state)
@@ -133,11 +145,11 @@ static void test_processing(void **state)
   assert_float_equal(out[7], in[7], 1e-6f);
 
   const float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
-  d.has_tone_curve = _build_tone_curve(&d, curve, 2);
+  d.has_tone_curve = _build_tone_curve(&d, curve, 2, 0.6f);
   process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.125f, 1e-6f);
-  assert_float_equal(out[1], 0.25f, 1e-6f);
-  assert_float_equal(out[2], 0.125f, 1e-6f);
+  assert_float_equal(out[0], 0.175f, 1e-6f);
+  assert_float_equal(out[1], 0.35f, 1e-6f);
+  assert_float_equal(out[2], 0.175f, 1e-6f);
   assert_float_equal(out[3], in[3], 1e-6f);
 
   profile.type = DT_COLORSPACE_EMBEDDED_MATRIX;
@@ -151,7 +163,7 @@ static void test_processing(void **state)
 
   d.hsm = NULL;
   process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.5f, 1e-6f);
+  assert_float_equal(out[0], 0.7f, 1e-6f);
   assert_float_equal(out[1], 0.0f, 1e-6f);
   assert_float_equal(out[2], 0.0f, 1e-6f);
   d.has_tone_curve = FALSE;
@@ -161,6 +173,7 @@ static void test_processing(void **state)
 
 static void test_commit_and_defaults(void **state)
 {
+  dt_iop_dng_look_params_t params = { .tone_curve_mix = 0.6f };
   dt_develop_t dev = { 0 };
   dt_iop_module_t module = { .dev = &dev };
   dt_dev_pixelpipe_t pipe = { 0 };
@@ -180,7 +193,7 @@ static void test_commit_and_defaults(void **state)
   dev.image_storage.profile_tone_curve_points = 2;
   reload_defaults(&module);
   assert_false(module.default_enabled);
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   assert_non_null(d->hsm);
   assert_ptr_not_equal(d->hsm, table);
   assert_memory_equal(d->hsm, table, sizeof(table));
@@ -190,20 +203,20 @@ static void test_commit_and_defaults(void **state)
   assert_float_equal(d->hsm[0], 0.0f, 1e-6f);
 
   dev.image_storage.profile_hsm_hue_div = G_MAXINT;
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   assert_null(d->hsm);
   assert_true(d->has_tone_curve);
   dev.image_storage.profile_hsm_hue_div = 1;
   table[1] = NAN;
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   assert_null(d->hsm);
   table[1] = -1.0f;
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   assert_null(d->hsm);
 
   dev.image_storage.profile_hsm_data = NULL;
   dev.image_storage.profile_tone_curve = NULL;
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   assert_null(d->hsm);
   assert_false(d->has_tone_curve);
   reload_defaults(&module);
@@ -228,8 +241,8 @@ static void test_automatic_enablement(void **state)
                              .default_enabled = TRUE };
   dt_develop_t dev = { 0 };
   dev.iop = g_list_append(NULL, &colorin);
-  dt_iop_dng_look_params_t defaults = { 0 };
-  dt_iop_dng_look_params_t history_params = { 0 };
+  dt_iop_dng_look_params_t defaults = { .tone_curve_mix = 0.6f };
+  dt_iop_dng_look_params_t history_params = { .tone_curve_mix = 0.6f };
   dt_iop_module_t module = { .op = "dng_look", .dev = &dev, .default_params = &defaults };
   dt_dev_pixelpipe_t pipe = { 0 };
   dt_dev_pixelpipe_iop_t piece = { 0 };
@@ -339,6 +352,7 @@ static void test_module_order(void **state)
 
 static void test_cache_snapshot(void **state)
 {
+  dt_iop_dng_look_params_t params = { .tone_curve_mix = 0.6f };
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
   float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
   dt_image_t image = { .id = 42, .profile_hsm_data = table,
@@ -352,7 +366,7 @@ static void test_cache_snapshot(void **state)
   cached_image = &image;
   cache_locked = FALSE;
   init_pipe(&module, &pipe, &piece);
-  commit_params(&module, NULL, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
   dt_iop_dng_look_data_t *d = piece.data;
   assert_false(cache_locked);
   assert_non_null(d->hsm);
@@ -361,9 +375,120 @@ static void test_cache_snapshot(void **state)
   table[0] = 90.0f;
   curve[3] = 1.0f;
   assert_float_equal(d->hsm[0], 0.0f, 1e-6f);
-  assert_float_equal(_apply_tone_curve(d, 1.0f), 0.5f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(d, 1.0f), 0.7f, 1e-6f);
   cleanup_pipe(&module, &pipe, &piece);
   cached_image = NULL;
+}
+
+static void test_zero_mix_processing(void **state)
+{
+  dt_iop_dng_look_params_t params = { .tone_curve_mix = 0.0f };
+  float curve[] = { 0.0f, 0.1f, 1.0f, 0.8f };
+  dt_develop_t dev = { 0 };
+  dev.image_storage.profile_tone_curve = curve;
+  dev.image_storage.profile_tone_curve_points = 2;
+  dt_iop_module_t module = { .dev = &dev };
+  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
+  dt_dev_pixelpipe_iop_t piece = { .colors = 4, .pipe = &pipe };
+  const dt_iop_roi_t roi = { .width = 1, .height = 2, .scale = 1.0f };
+  const float DT_ALIGNED_ARRAY in[] = { 1.5f, -0.1f, 0.4f, 0.37f,
+                                      0.8f, 0.6f, 0.6f, 0.81f };
+  float DT_ALIGNED_ARRAY out[8];
+  init_pipe(&module, &pipe, &piece);
+  commit_params(&module, &params, &pipe, &piece);
+  const dt_iop_dng_look_data_t *d = piece.data;
+  assert_false(d->has_tone_curve);
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(in));
+
+  float table[] = { 120.0f, 0.5f, 1.0f, 120.0f, 0.5f, 1.0f };
+  dev.image_storage.profile_hsm_data = table;
+  dev.image_storage.profile_hsm_hue_div = 1;
+  dev.image_storage.profile_hsm_sat_div = 2;
+  dev.image_storage.profile_hsm_val_div = 1;
+  commit_params(&module, &params, &pipe, &piece);
+  assert_non_null(d->hsm);
+  assert_false(d->has_tone_curve);
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_float_equal(out[4], 0.7f, 1e-6f);
+  assert_float_equal(out[5], 0.8f, 1e-6f);
+  assert_float_equal(out[6], 0.7f, 1e-6f);
+  assert_float_equal(out[7], in[7], 1e-6f);
+  cleanup_pipe(&module, &pipe, &piece);
+}
+
+static void test_saturation_cap(void **state)
+{
+  float table[] = { 0.0f, 100.0f, 1.0f, 0.0f, 100.0f, 1.0f };
+  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
+  dt_iop_module_t module = { 0 };
+  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
+  const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
+  const float DT_ALIGNED_ARRAY in[] = { 0.8f, 0.6f, 0.6f, 0.37f };
+  float DT_ALIGNED_ARRAY out[4];
+  const float scales[] = { 0.0f, 1.0f, 1.3f, 100.0f };
+  for(size_t i = 0; i < G_N_ELEMENTS(scales); i++)
+  {
+    table[1] = table[4] = scales[i];
+    process(&module, &piece, in, out, &roi, &roi);
+    const float expected = 0.8f - 0.2f * MIN(scales[i], 1.3f);
+    assert_float_equal(out[0], 0.8f, 1e-6f);
+    assert_float_equal(out[1], expected, 1e-6f);
+    assert_float_equal(out[2], expected, 1e-6f);
+    assert_float_equal(out[3], in[3], 1e-6f);
+  }
+}
+
+static void test_legacy_params(void **state)
+{
+  const int reserved = 42;
+  void *new_params = NULL;
+  int32_t size = 0;
+  int version = 0;
+  assert_int_equal(legacy_params(NULL, &reserved, 1, &new_params, &size, &version), 0);
+  assert_non_null(new_params);
+  const dt_iop_dng_look_params_t *p = new_params;
+  assert_int_equal(size, sizeof(*p));
+  assert_int_equal(version, 2);
+  assert_int_equal(p->reserved, reserved);
+  assert_float_equal(p->tone_curve_mix, 1.0f, 1e-6f);
+  free(new_params);
+  assert_int_equal(legacy_params(NULL, &reserved, 0, &new_params, &size, &version), 1);
+}
+
+static void test_contrast_saturation_helper(void **state)
+{
+  dt_aligned_pixel_t rgb = { 0.2f, 0.5f, 0.8f, 0.37f };
+  dt_iop_apply_contrast_saturation(rgb, 1.0f, 1.0f);
+  assert_float_equal(rgb[0], 0.2f, 1e-6f);
+  assert_float_equal(rgb[1], 0.5f, 1e-6f);
+  assert_float_equal(rgb[2], 0.8f, 1e-6f);
+
+  dt_iop_apply_contrast_saturation(rgb, 2.0f, 1.0f);
+  assert_float_equal(rgb[0], 0.0f, 1e-6f);
+  assert_float_equal(rgb[1], 0.5f, 1e-6f);
+  assert_float_equal(rgb[2], 1.0f, 1e-6f);
+
+  dt_iop_apply_contrast_saturation(rgb, 1.0f, 0.0f);
+  const float luma = 0.7151522f * 0.5f + 0.0721750f;
+  for(int c = 0; c < 3; c++)
+    assert_float_equal(rgb[c], luma, 1e-6f);
+  assert_float_equal(rgb[3], 0.37f, 1e-6f);
+
+  dt_iop_apply_contrast_saturation(rgb, 0.0f, 1.0f);
+  for(int c = 0; c < 3; c++)
+    assert_float_equal(rgb[c], 0.5f, 1e-6f);
+
+  rgb[0] = 0.0f;
+  rgb[1] = 0.5f;
+  rgb[2] = 1.0f;
+  dt_iop_apply_contrast_saturation(rgb, 1.0f, 4.0f);
+  assert_float_equal(rgb[0], 0.0f, 1e-6f);
+  assert_float_equal(rgb[2], 1.0f, 1e-6f);
+  assert_float_equal(rgb[3], 0.37f, 1e-6f);
 }
 
 int main(int argc, char *argv[])
@@ -376,6 +501,10 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_automatic_enablement),
     cmocka_unit_test(test_module_order),
     cmocka_unit_test(test_cache_snapshot),
+    cmocka_unit_test(test_zero_mix_processing),
+    cmocka_unit_test(test_saturation_cap),
+    cmocka_unit_test(test_legacy_params),
+    cmocka_unit_test(test_contrast_saturation_helper),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }
