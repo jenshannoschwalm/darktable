@@ -24,13 +24,14 @@
 #include "gui/gtk.h"
 #include "iop/iop_api.h"
 
-DT_MODULE_INTROSPECTION(1, dt_iop_dng_look_params_t)
+DT_MODULE_INTROSPECTION(2, dt_iop_dng_look_params_t)
 
 #define DNG_LOOK_TONE_SAMPLES 1024
 
 typedef struct dt_iop_dng_look_params_t
 {
   int reserved; // $DEFAULT: 0
+  float tone_curve_mix; // $MIN: 0.0 $MAX: 1.0 $DEFAULT: 0.3
 } dt_iop_dng_look_params_t;
 
 typedef struct dt_iop_dng_look_data_t
@@ -40,6 +41,28 @@ typedef struct dt_iop_dng_look_data_t
   gboolean has_tone_curve;
   float tone_curve[DNG_LOOK_TONE_SAMPLES];
 } dt_iop_dng_look_data_t;
+
+int legacy_params(dt_iop_module_t *self,
+                  const void *const old_params,
+                  const int old_version,
+                  void **new_params,
+                  int32_t *new_params_size,
+                  int *new_version)
+{
+  if(old_version != 1)
+    return 1;
+
+  dt_iop_dng_look_params_t *p = calloc(1, sizeof(*p));
+  if(!p)
+    return 1;
+  p->reserved = *(const int *)old_params;
+  // preserve the full vendor curve for existing edits
+  p->tone_curve_mix = 1.0f;
+  *new_params = p;
+  *new_params_size = sizeof(*p);
+  *new_version = 2;
+  return 0;
+}
 
 const char *name()
 {
@@ -97,7 +120,8 @@ static gboolean _forward_matrix_selected(const dt_develop_t *dev)
 
 static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
                                   const float *curve,
-                                  const int points)
+                                  const int points,
+                                  const float mix)
 {
   if(!curve || points < 2 || points > G_MAXINT / 2)
     return FALSE;
@@ -121,8 +145,8 @@ static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
     const float y0 = curve[2 * segment + 1];
     const float x1 = curve[2 * (segment + 1)];
     const float y1 = curve[2 * (segment + 1) + 1];
-    const float t = CLAMP((x - x0) / (x1 - x0), 0.0f, 1.0f);
-    d->tone_curve[i] = y0 + t * (y1 - y0);
+    const float t = CLIP((x - x0) / (x1 - x0));
+    d->tone_curve[i] = x + mix * (y0 + t * (y1 - y0) - x);
   }
   return TRUE;
 }
@@ -132,17 +156,17 @@ static void _lookup_hsm(const dt_iop_dng_look_data_t *d,
                         dt_aligned_pixel_t correction)
 {
   const float h = (hsv[0] - floorf(hsv[0])) * d->hue_div;
-  const float s = CLAMP(hsv[1], 0.0f, 1.0f) * (d->sat_div - 1);
-  const float v = CLAMP(hsv[2], 0.0f, 1.0f) * (d->val_div - 1);
+  const float s = CLIP(hsv[1]) * (d->sat_div - 1);
+  const float v = CLIP(hsv[2]) * (d->val_div - 1);
   const int hi[2] = { MIN((int)h, d->hue_div - 1),
                      (MIN((int)h, d->hue_div - 1) + 1) % d->hue_div };
   const int si[2] = { MIN((int)s, d->sat_div - 1),
                      MIN((int)s + 1, d->sat_div - 1) };
   const int vi[2] = { MIN((int)v, d->val_div - 1),
                      MIN((int)v + 1, d->val_div - 1) };
-  const float hf = CLAMP(h - hi[0], 0.0f, 1.0f);
-  const float sf = CLAMP(s - si[0], 0.0f, 1.0f);
-  const float vf = CLAMP(v - vi[0], 0.0f, 1.0f);
+  const float hf = CLIP(h - hi[0]);
+  const float sf = CLIP(s - si[0]);
+  const float vf = CLIP(v - vi[0]);
 
   correction[0] = correction[1] = correction[2] = 0.0f;
   for(int z = 0; z < 2; z++)
@@ -161,7 +185,7 @@ static void _lookup_hsm(const dt_iop_dng_look_data_t *d,
 
 static float _apply_tone_curve(const dt_iop_dng_look_data_t *d, const float value)
 {
-  const float x = CLAMP(value, 0.0f, 1.0f) * (DNG_LOOK_TONE_SAMPLES - 1);
+  const float x = CLIP(value) * (DNG_LOOK_TONE_SAMPLES - 1);
   const int i = MIN((int)x, DNG_LOOK_TONE_SAMPLES - 2);
   return d->tone_curve[i] + (x - i) * (d->tone_curve[i + 1] - d->tone_curve[i]);
 }
@@ -226,7 +250,9 @@ void commit_params(dt_iop_module_t *self,
       }
     }
   }
-  d->has_tone_curve = _build_tone_curve(d, img->profile_tone_curve, img->profile_tone_curve_points);
+  const dt_iop_dng_look_params_t *p = (const dt_iop_dng_look_params_t *)params;
+  const float mix = p && isfinite(p->tone_curve_mix) ? CLIP(p->tone_curve_mix) : 0.3f;
+  d->has_tone_curve = _build_tone_curve(d, img->profile_tone_curve, img->profile_tone_curve_points, mix);
   if(cached)
     dt_image_cache_read_release(img);
 }
@@ -276,8 +302,11 @@ void process(dt_iop_module_t *self,
           _lookup_hsm(d, hsv, correction);
           hsv[0] += correction[0] / 360.0f;
           hsv[0] -= floorf(hsv[0]);
-          hsv[1] = CLAMP(hsv[1] * correction[1], 0.0f, 1.0f);
-          hsv[2] = CLAMP(hsv[2] * correction[2], 0.0f, 1.0f);
+          correction[1] = CLAMP(correction[1], 0.0f, 1.3f);
+          // keep look-table brightness from adding contrast on top of the softened tone curve
+          correction[2] = CLAMP(correction[2], 0.0f, 1.2f);
+          hsv[1] = CLIP(hsv[1] * correction[1]);
+          hsv[2] = CLIP(hsv[2] * correction[2]);
           dt_HSV_2_RGB(hsv, rgb);
         }
         if(d->has_tone_curve)
