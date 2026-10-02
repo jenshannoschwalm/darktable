@@ -1262,7 +1262,7 @@ static void _check_profile_look_table(Exiv2::ExifData &exifData,
       };
       const int index = sel_illu >= 0 && sel_illu < (int)G_N_ELEMENTS(keys) ? sel_illu : 0;
       Exiv2::ExifData::const_iterator pos = exifData.findKey(Exiv2::ExifKey(keys[index]));
-      if(pos != exifData.end() && pos->count() == n_entries)
+      if(pos != exifData.end() && (int)pos->count() == n_entries)
       {
         img->profile_hsm_data = (float *)g_malloc_n(n_entries, sizeof(float));
         for(int i = 0; i < n_entries; i++)
@@ -1281,7 +1281,7 @@ static void _check_profile_look_table(Exiv2::ExifData &exifData,
   if(tc_pos != exifData.end() && tc_pos->count() >= 4
      && tc_pos->count() <= G_MAXINT && tc_pos->count() % 2 == 0)
   {
-    const int n = tc_pos->count();
+    const int n = (int)tc_pos->count();
     img->profile_tone_curve = (float *)g_malloc_n(n, sizeof(float));
     for(int i = 0; i < n; i++)
       img->profile_tone_curve[i] = tc_pos->toFloat(i);
