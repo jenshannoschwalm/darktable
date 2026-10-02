@@ -22,12 +22,38 @@
 
 #include <cmocka.h>
 
+#define dt_image_cache_get __wrap_dt_image_cache_get
+#define dt_image_cache_read_release __wrap_dt_image_cache_read_release
+
 #include "iop/dng_look.c"
 #include "common/iop_order.h"
+
+#undef dt_image_cache_get
+#undef dt_image_cache_read_release
 
 #ifdef _WIN32
 #include "win/main_wrapper.h"
 #endif
+
+static dt_image_t *cached_image;
+static gboolean cache_locked;
+
+dt_image_t *__wrap_dt_image_cache_get(const dt_imgid_t imgid, const char mode)
+{
+  assert_non_null(cached_image);
+  assert_int_equal(imgid, cached_image->id);
+  assert_int_equal(mode, 'r');
+  assert_false(cache_locked);
+  cache_locked = TRUE;
+  return cached_image;
+}
+
+void __wrap_dt_image_cache_read_release(const dt_image_t *img)
+{
+  assert_ptr_equal(img, cached_image);
+  assert_true(cache_locked);
+  cache_locked = FALSE;
+}
 
 static void test_interpolation_and_hue_wrap(void **state)
 {
@@ -199,6 +225,35 @@ static void test_module_order(void **state)
   }
 }
 
+static void test_cache_snapshot(void **state)
+{
+  float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
+  float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
+  dt_image_t image = { .id = 42, .profile_hsm_data = table,
+                      .profile_hsm_hue_div = 1, .profile_hsm_sat_div = 2, .profile_hsm_val_div = 1,
+                      .profile_tone_curve = curve, .profile_tone_curve_points = 2 };
+  dt_develop_t dev = { 0 };
+  dev.image_storage.id = image.id;
+  dt_iop_module_t module = { .dev = &dev };
+  dt_dev_pixelpipe_t pipe = { 0 };
+  dt_dev_pixelpipe_iop_t piece = { .colors = 4 };
+  cached_image = &image;
+  cache_locked = FALSE;
+  init_pipe(&module, &pipe, &piece);
+  commit_params(&module, NULL, &pipe, &piece);
+  dt_iop_dng_look_data_t *d = piece.data;
+  assert_false(cache_locked);
+  assert_non_null(d->hsm);
+  assert_memory_equal(d->hsm, table, sizeof(table));
+  assert_true(d->has_tone_curve);
+  table[0] = 90.0f;
+  curve[3] = 1.0f;
+  assert_float_equal(d->hsm[0], 0.0f, 1e-6f);
+  assert_float_equal(_apply_tone_curve(d, 1.0f), 0.5f, 1e-6f);
+  cleanup_pipe(&module, &pipe, &piece);
+  cached_image = NULL;
+}
+
 int main(int argc, char *argv[])
 {
   const struct CMUnitTest tests[] = {
@@ -207,6 +262,7 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_processing),
     cmocka_unit_test(test_commit_and_defaults),
     cmocka_unit_test(test_module_order),
+    cmocka_unit_test(test_cache_snapshot),
   };
   return cmocka_run_group_tests(tests, NULL, NULL);
 }

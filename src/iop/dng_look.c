@@ -17,6 +17,7 @@
 */
 
 #include "common/colorspaces_inline_conversions.h"
+#include "common/image_cache.h"
 #include "develop/develop.h"
 #include "develop/imageop.h"
 #include "gui/gtk.h"
@@ -145,11 +146,18 @@ void commit_params(dt_iop_module_t *self,
                    dt_dev_pixelpipe_iop_t *piece)
 {
   dt_iop_dng_look_data_t *d = piece->data;
-  const dt_image_t *img = &self->dev->image_storage;
   g_free(d->hsm);
   d->hsm = NULL;
   d->hue_div = d->sat_div = d->val_div = 0;
+  d->has_tone_curve = FALSE;
   piece->process_cl_ready = FALSE;
+
+  // image_storage borrows cache-owned tables; keep them locked until the pipe has its own copies
+  const dt_imgid_t imgid = self->dev->image_storage.id;
+  const gboolean cached = dt_is_valid_imgid(imgid);
+  const dt_image_t *img = cached ? dt_image_cache_get(imgid, 'r') : &self->dev->image_storage;
+  if(!img)
+    return;
 
   if(img->profile_hsm_data && img->profile_hsm_hue_div >= 1
      && img->profile_hsm_sat_div >= 2 && img->profile_hsm_val_div >= 1
@@ -179,6 +187,8 @@ void commit_params(dt_iop_module_t *self,
     }
   }
   d->has_tone_curve = _build_tone_curve(d, img->profile_tone_curve, img->profile_tone_curve_points);
+  if(cached)
+    dt_image_cache_read_release(img);
 }
 
 void process(dt_iop_module_t *self,
