@@ -73,7 +73,8 @@ void reload_defaults(dt_iop_module_t *self)
 static gboolean _forward_matrix_selected(const dt_develop_t *dev)
 {
   const dt_iop_module_t *colorin = dt_iop_get_module_from_list(dev->iop, "colorin");
-  if(!colorin || !colorin->get_p || !colorin->default_params)
+  if(!colorin || !colorin->get_p || !colorin->default_params
+     || g_list_find_custom(dev->module_filter_out, "colorin", (GCompareFunc)g_strcmp0))
     return FALSE;
 
   const dt_iop_params_t *params = colorin->default_params;
@@ -193,7 +194,8 @@ void commit_params(dt_iop_module_t *self,
   const gboolean enabled =
     dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
     && _forward_matrix_selected(self->dev)
-    && (img->profile_hsm_data != NULL || img->profile_tone_curve != NULL);
+    && (img->profile_hsm_data != NULL || img->profile_tone_curve != NULL)
+    && !g_list_find_custom(self->dev->module_filter_out, self->op, (GCompareFunc)g_strcmp0);
   // auto-enable defaults, but preserve an explicit disable recorded in history
   piece->enabled = enabled && (params == self->default_params || piece->enabled);
 

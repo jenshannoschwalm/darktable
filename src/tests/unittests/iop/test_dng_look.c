@@ -230,7 +230,7 @@ static void test_automatic_enablement(void **state)
   dev.iop = g_list_append(NULL, &colorin);
   dt_iop_dng_look_params_t defaults = { 0 };
   dt_iop_dng_look_params_t history_params = { 0 };
-  dt_iop_module_t module = { .dev = &dev, .default_params = &defaults };
+  dt_iop_module_t module = { .op = "dng_look", .dev = &dev, .default_params = &defaults };
   dt_dev_pixelpipe_t pipe = { 0 };
   dt_dev_pixelpipe_iop_t piece = { 0 };
   init_pipe(&module, &pipe, &piece);
@@ -284,6 +284,19 @@ static void test_automatic_enablement(void **state)
   piece.enabled = TRUE;
   commit_params(&module, &history_params, &pipe, &piece);
   assert_true(piece.enabled);
+
+  dev.module_filter_out = g_list_append(NULL, "exposure");
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_true(piece.enabled);
+  dev.module_filter_out = g_list_append(dev.module_filter_out, "dng_look");
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  g_list_free(dev.module_filter_out);
+  dev.module_filter_out = g_list_append(NULL, "colorin");
+  commit_params(&module, module.default_params, &pipe, &piece);
+  assert_false(piece.enabled);
+  g_list_free(dev.module_filter_out);
+  dev.module_filter_out = NULL;
 
   colorin.get_p = NULL;
   commit_params(&module, module.default_params, &pipe, &piece);
