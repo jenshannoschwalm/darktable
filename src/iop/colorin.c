@@ -522,9 +522,13 @@ static void _profile_changed(GtkWidget *widget, dt_iop_module_t *self)
     dt_colorspaces_color_profile_t *pp = prof->data;
     if(pp->in_pos == pos)
     {
+      const gboolean sync_look = p->type == DT_COLORSPACE_DNG_LOOK
+                                 || pp->type == DT_COLORSPACE_DNG_LOOK;
       p->type = pp->type;
       memcpy(p->filename, pp->filename, sizeof(p->filename));
       dt_dev_add_history_item(darktable.develop, self, TRUE);
+      if(sync_look)
+        dt_dev_reprocess_all(self->dev);
 
       DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
                               DT_COLORSPACES_PROFILE_TYPE_INPUT);
@@ -1384,7 +1388,7 @@ void commit_params(dt_iop_module_t *self,
     else
       type = DT_COLORSPACE_EMBEDDED_MATRIX;
   }
-  if(type == DT_COLORSPACE_EMBEDDED_MATRIX)
+  if(type == DT_COLORSPACE_EMBEDDED_MATRIX || type == DT_COLORSPACE_DNG_LOOK)
   {
     // embedded matrix, hopefully D65
     const dt_image_t *cimg = dt_image_cache_get(pipe->image.id, 'r');
@@ -1973,7 +1977,6 @@ static void update_profile_list(dt_iop_module_t *self)
     g->image_profiles = g_list_append(g->image_profiles, prof);
     prof->in_pos = ++pos;
   }
-  dt_image_cache_read_release(cimg);
   // use the matrix embedded in some DNGs and EXRs
   if(dt_is_valid_colormatrix(self->dev->image_storage.d65_color_matrix[0]))
   {
@@ -1983,7 +1986,19 @@ static void update_profile_list(dt_iop_module_t *self)
     prof->type = DT_COLORSPACE_EMBEDDED_MATRIX;
     g->image_profiles = g_list_append(g->image_profiles, prof);
     prof->in_pos = ++pos;
+
+    if(!dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
+       && cimg && (cimg->profile_hsm_data != NULL || cimg->profile_tone_curve != NULL))
+    {
+      prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));
+      g_strlcpy(prof->name, dt_colorspaces_get_name(DT_COLORSPACE_DNG_LOOK, ""),
+                sizeof(prof->name));
+      prof->type = DT_COLORSPACE_DNG_LOOK;
+      g->image_profiles = g_list_append(g->image_profiles, prof);
+      prof->in_pos = ++pos;
+    }
   }
+  dt_image_cache_read_release(cimg);
 
   // use the DNG forward matrix if present -- gives the "as intended by
   // the DNG converter" look rather than the purely colorimetric one

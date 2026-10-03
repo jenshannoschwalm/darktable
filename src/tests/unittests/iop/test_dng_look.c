@@ -129,7 +129,7 @@ static void test_scale_caps(void **state)
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
   dt_iop_module_t module = { 0 };
-  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_DNG_LOOK };
   dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
   dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
   const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
@@ -162,7 +162,7 @@ static void test_processing(void **state)
   float table[] = { 120.0f, 0.5f, 0.5f, 120.0f, 0.5f, 0.5f };
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
   dt_iop_module_t module = { 0 };
-  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_DNG_LOOK };
   dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
   dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
   const dt_iop_roi_t roi = { .width = 1, .height = 2, .scale = 1.0f };
@@ -184,10 +184,13 @@ static void test_processing(void **state)
   profile.type = DT_COLORSPACE_EMBEDDED_MATRIX;
   process(&module, &piece, in, out, &roi, &roi);
   assert_memory_equal(out, in, sizeof(in));
+  profile.type = DT_COLORSPACE_FORWARD_MATRIX;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(in));
   pipe.input_profile_info = NULL;
   process(&module, &piece, in, out, &roi, &roi);
   assert_memory_equal(out, in, sizeof(in));
-  profile.type = DT_COLORSPACE_FORWARD_MATRIX;
+  profile.type = DT_COLORSPACE_DNG_LOOK;
   pipe.input_profile_info = &profile;
 
   d.hsm = NULL;
@@ -253,7 +256,7 @@ static void *_colorin_get_p(const void *params, const char *name)
 
 static void test_automatic_enablement(void **state)
 {
-  dt_colorspaces_color_profile_type_t type = DT_COLORSPACE_FORWARD_MATRIX;
+  dt_colorspaces_color_profile_type_t type = DT_COLORSPACE_DNG_LOOK;
   dt_colorspaces_color_profile_type_t stale_type = DT_COLORSPACE_EMBEDDED_MATRIX;
   dt_iop_module_so_t colorin_so = { .op = "colorin" };
   dt_iop_module_t colorin = { .so = &colorin_so, .get_p = _colorin_get_p,
@@ -275,25 +278,29 @@ static void test_automatic_enablement(void **state)
   dev.image_storage.profile_hsm_val_div = 1;
   dev.image_storage.profile_tone_curve_points = 2;
 
+  const dt_colorspaces_color_profile_type_t types[] =
+    { DT_COLORSPACE_EMBEDDED_MATRIX, DT_COLORSPACE_FORWARD_MATRIX, DT_COLORSPACE_DNG_LOOK };
   for(int matrix = 0; matrix < 2; matrix++)
-    for(int forward = 0; forward < 2; forward++)
+    for(int profile = 0; profile < G_N_ELEMENTS(types); profile++)
       for(int data = 0; data < 4; data++)
       {
         if(matrix)
           dev.image_storage.dng_forward_matrix[0] = 1.0f;
         else
           dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
-        type = forward ? DT_COLORSPACE_FORWARD_MATRIX : DT_COLORSPACE_EMBEDDED_MATRIX;
-        stale_type = forward ? DT_COLORSPACE_EMBEDDED_MATRIX : DT_COLORSPACE_FORWARD_MATRIX;
+        type = types[profile];
+        stale_type = type == DT_COLORSPACE_DNG_LOOK
+                       ? DT_COLORSPACE_EMBEDDED_MATRIX : DT_COLORSPACE_DNG_LOOK;
         dev.image_storage.profile_hsm_data = data & 1 ? table : NULL;
         dev.image_storage.profile_tone_curve = data & 2 ? curve : NULL;
         module.default_enabled = TRUE;
         reload_defaults(&module);
         commit_params(&module, module.default_params, &pipe, &piece);
-        assert_int_equal(piece.enabled, matrix && forward && data != 0);
+        assert_int_equal(piece.enabled, type == DT_COLORSPACE_DNG_LOOK && data != 0);
       }
 
-  type = DT_COLORSPACE_FORWARD_MATRIX;
+  type = DT_COLORSPACE_DNG_LOOK;
+  dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
   dt_colorspaces_color_profile_type_t embedded = DT_COLORSPACE_EMBEDDED_MATRIX;
   dt_dev_history_item_t hist1 = { .module = &colorin, .params = &embedded, .enabled = TRUE };
   dt_dev_history_item_t hist2 = { .module = &colorin, .params = &type, .enabled = TRUE };
