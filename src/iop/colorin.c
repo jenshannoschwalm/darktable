@@ -522,9 +522,13 @@ static void _profile_changed(GtkWidget *widget, dt_iop_module_t *self)
     dt_colorspaces_color_profile_t *pp = prof->data;
     if(pp->in_pos == pos)
     {
+      const gboolean sync_dng_look = p->type == DT_COLORSPACE_FORWARD_MATRIX_LOOK
+                                 || pp->type == DT_COLORSPACE_FORWARD_MATRIX_LOOK;
       p->type = pp->type;
       memcpy(p->filename, pp->filename, sizeof(p->filename));
       dt_dev_add_history_item(darktable.develop, self, TRUE);
+      if(sync_dng_look)
+        dt_dev_reprocess_all(self->dev);
 
       DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
                               DT_COLORSPACES_PROFILE_TYPE_INPUT);
