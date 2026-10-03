@@ -988,8 +988,6 @@ void dt_mipmap_cache_get_with_caller(dt_mipmap_buffer_t *buf,
         buffered_image = *cimg;
         buffered_image.profile_hsm_data = NULL;
         buffered_image.profile_hsm_hue_div = buffered_image.profile_hsm_sat_div = buffered_image.profile_hsm_val_div = 0;
-        buffered_image.profile_tone_curve = NULL;
-        buffered_image.profile_tone_curve_points = 0;
         // dt_image_t *img = dt_image_cache_write_get(cimg);
         // dt_image_cache_write_release(img, DT_IMAGE_CACHE_RELAXED);
         dt_image_cache_read_release(cimg);
@@ -1015,7 +1013,6 @@ void dt_mipmap_cache_get_with_caller(dt_mipmap_buffer_t *buf,
           // swap back new image data:
           dt_image_t *img = dt_image_cache_get(imgid, 'w');
           g_free(img->profile_hsm_data);
-          g_free(img->profile_tone_curve);
           *img = buffered_image;
           img->load_status = DT_IMAGEIO_OK;
           // dt_print(DT_DEBUG_ALWAYS, "[mipmap read get] initializing full buffer img %u with %u %u -> %d %d (%p)",
@@ -1026,7 +1023,6 @@ void dt_mipmap_cache_get_with_caller(dt_mipmap_buffer_t *buf,
         else
         {
           g_free(buffered_image.profile_hsm_data);
-          g_free(buffered_image.profile_tone_curve);
           dt_print(DT_DEBUG_PIPE, "[mipmap read get] error loading ID=%d", imgid);
           //
           // we can only return a zero dimension buffer if the buffer

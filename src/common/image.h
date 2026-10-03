@@ -328,8 +328,6 @@ typedef struct dt_image_t
   int profile_hsm_hue_div;
   int profile_hsm_sat_div;
   int profile_hsm_val_div;
-  float *profile_tone_curve;                 // profile_tone_curve_points * 2 floats, owned by the struct
-  int profile_tone_curve_points;
   uint8_t *profile;             // embedded profile, for example from JPEGs
   uint32_t profile_size;
   dt_image_colorspace_t colorspace; // the colorspace that is

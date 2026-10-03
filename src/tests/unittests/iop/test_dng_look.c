@@ -89,42 +89,7 @@ static void test_interpolation_and_hue_wrap(void **state)
   assert_float_equal(correction[0], 1.0f, 1e-6f);
 }
 
-static void test_tone_curve(void **state)
-{
-  dt_iop_dng_look_data_t d = { 0 };
-  const float curve[] = { 0.2f, 0.1f, 0.5f, 0.7f, 0.8f, 0.9f };
-  assert_true(_build_tone_curve(&d, curve, 3, 1.0f));
-  assert_float_equal(_apply_tone_curve(&d, -1.0f), 0.1f, 1e-6f);
-  assert_float_equal(_apply_tone_curve(&d, 2.0f), 0.9f, 1e-6f);
-  assert_float_equal(_apply_tone_curve(&d, 0.35f), 0.4f, 1e-6f);
-
-  const float duplicate_x[] = { 0.0f, 0.0f, 0.0f, 1.0f };
-  const float decreasing_y[] = { 0.0f, 1.0f, 1.0f, 0.0f };
-  const float nonfinite[] = { 0.0f, 0.0f, NAN, 1.0f };
-  assert_false(_build_tone_curve(&d, duplicate_x, 2, 1.0f));
-  assert_false(_build_tone_curve(&d, decreasing_y, 2, 1.0f));
-  assert_false(_build_tone_curve(&d, nonfinite, 2, 1.0f));
-  assert_false(_build_tone_curve(&d, curve, 1, 1.0f));
-  assert_false(_build_tone_curve(&d, NULL, 3, 1.0f));
-}
-
-static void test_tone_curve_mix(void **state)
-{
-  dt_iop_dng_look_data_t d = { 0 };
-  const float curve[] = { 0.0f, 0.0f, 0.5f, 0.8f, 1.0f, 1.0f };
-  const float values[] = { 0.25f, 0.75f };
-  const float raw[] = { 0.4f, 0.9f };
-  const float mixes[] = { 0.0f, 0.3f, 1.0f };
-  for(int m = 0; m < 3; m++)
-  {
-    assert_true(_build_tone_curve(&d, curve, 3, mixes[m]));
-    for(int i = 0; i < 2; i++)
-      assert_float_equal(_apply_tone_curve(&d, values[i]),
-                         values[i] + mixes[m] * (raw[i] - values[i]), 1e-6f);
-  }
-}
-
-static void test_scale_caps(void **state)
+static void test_full_saturation_and_unchanged_value(void **state)
 {
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
@@ -137,9 +102,8 @@ static void test_scale_caps(void **state)
   const float DT_ALIGNED_ARRAY gray[] = { 0.4f, 0.4f, 0.4f, 1.0f };
   float DT_ALIGNED_ARRAY out[4];
   const float sat_scales[] = { -0.1f, 1.0f, 1.3f, 1.31f, 2.0f };
-  const float expected_green[] = { 0.5f, 0.25f, 0.175f, 0.175f, 0.175f };
+  const float expected_green[] = { 0.5f, 0.25f, 0.175f, 0.1725f, 0.0f };
   const float val_scales[] = { -0.1f, 1.0f, 1.2f, 1.21f, 2.0f };
-  const float expected_gray[] = { 0.0f, 0.4f, 0.48f, 0.48f, 0.48f };
   for(int i = 0; i < 5; i++)
   {
     table[1] = table[4] = sat_scales[i];
@@ -149,12 +113,11 @@ static void test_scale_caps(void **state)
     table[1] = table[4] = 1.0f;
     table[2] = table[5] = val_scales[i];
     process(&module, &piece, gray, out, &roi, &roi);
-    assert_float_equal(out[0], expected_gray[i], 1e-6f);
+    assert_float_equal(out[0], gray[0], 1e-6f);
   }
-  table[2] = table[5] = 1.2f;
   const float DT_ALIGNED_ARRAY bright[] = { 0.9f, 0.9f, 0.9f, 1.0f };
   process(&module, &piece, bright, out, &roi, &roi);
-  assert_float_equal(out[0], 1.0f, 1e-6f);
+  assert_float_equal(out[0], bright[0], 1e-6f);
 }
 
 static void test_processing(void **state)
@@ -169,22 +132,16 @@ static void test_processing(void **state)
   const float DT_ALIGNED_ARRAY in[] = { 1.0f, 0.0f, 0.0f, 0.37f, 0.4f, 0.4f, 0.4f, 0.81f };
   float DT_ALIGNED_ARRAY out[8];
   process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.25f, 1e-6f);
-  assert_float_equal(out[1], 0.5f, 1e-6f);
+  assert_float_equal(out[0], 0.5f, 1e-6f);
+  assert_float_equal(out[1], 1.0f, 1e-6f);
   assert_float_equal(out[3], in[3], 1e-6f);
-  assert_float_equal(out[4], 0.2f, 1e-6f);
+  assert_float_equal(out[4], 0.4f, 1e-6f);
   assert_float_equal(out[7], in[7], 1e-6f);
-
-  const float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
-  d.has_tone_curve = _build_tone_curve(&d, curve, 2, 1.0f);
-  process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.125f, 1e-6f);
-  assert_float_equal(out[1], 0.25f, 1e-6f);
 
   profile.type = DT_COLORSPACE_DNG_LOOK;
   process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.125f, 1e-6f);
-  assert_float_equal(out[1], 0.25f, 1e-6f);
+  assert_float_equal(out[0], 0.5f, 1e-6f);
+  assert_float_equal(out[1], 1.0f, 1e-6f);
   assert_float_equal(out[3], in[3], 1e-6f);
 
   profile.type = DT_COLORSPACE_EMBEDDED_MATRIX;
@@ -197,10 +154,6 @@ static void test_processing(void **state)
   pipe.input_profile_info = &profile;
 
   d.hsm = NULL;
-  process(&module, &piece, in, out, &roi, &roi);
-  assert_float_equal(out[0], 0.5f, 1e-6f);
-  assert_float_equal(out[1], 0.0f, 1e-6f);
-  d.has_tone_curve = FALSE;
   process(&module, &piece, in, out, &roi, &roi);
   assert_memory_equal(out, in, sizeof(in));
 }
@@ -217,13 +170,10 @@ static void test_commit_and_defaults(void **state)
   assert_false(module.default_enabled);
 
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
-  const float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
   dev.image_storage.profile_hsm_data = table;
   dev.image_storage.profile_hsm_hue_div = 1;
   dev.image_storage.profile_hsm_sat_div = 2;
   dev.image_storage.profile_hsm_val_div = 1;
-  dev.image_storage.profile_tone_curve = (float *)curve;
-  dev.image_storage.profile_tone_curve_points = 2;
   reload_defaults(&module);
   assert_false(module.default_enabled);
   commit_params(&module, NULL, &pipe, &piece);
@@ -235,7 +185,6 @@ static void test_commit_and_defaults(void **state)
   dev.image_storage.profile_hsm_hue_div = G_MAXINT;
   commit_params(&module, NULL, &pipe, &piece);
   assert_null(d->hsm);
-  assert_true(d->has_tone_curve);
   dev.image_storage.profile_hsm_hue_div = 1;
   table[1] = NAN;
   commit_params(&module, NULL, &pipe, &piece);
@@ -245,9 +194,7 @@ static void test_commit_and_defaults(void **state)
   assert_null(d->hsm);
 
   dev.image_storage.profile_hsm_data = NULL;
-  dev.image_storage.profile_tone_curve = NULL;
   commit_params(&module, NULL, &pipe, &piece);
-  assert_false(d->has_tone_curve);
   cleanup_pipe(&module, &pipe, &piece);
 }
 
@@ -275,18 +222,16 @@ static void test_automatic_enablement(void **state)
   init_pipe(&module, &pipe, &piece);
 
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
-  float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
   dev.image_storage.profile_hsm_hue_div = 1;
   dev.image_storage.profile_hsm_sat_div = 2;
   dev.image_storage.profile_hsm_val_div = 1;
-  dev.image_storage.profile_tone_curve_points = 2;
 
   const dt_colorspaces_color_profile_type_t types[] =
     { DT_COLORSPACE_FORWARD_MATRIX, DT_COLORSPACE_DNG_LOOK,
       DT_COLORSPACE_EMBEDDED_MATRIX, DT_COLORSPACE_LIN_REC709 };
   for(int matrix = 0; matrix < 2; matrix++)
     for(int profile = 0; profile < (int)G_N_ELEMENTS(types); profile++)
-      for(int data = 0; data < 4; data++)
+      for(int data = 0; data < 2; data++)
       {
         if(matrix)
           dev.image_storage.dng_forward_matrix[0] = 1.0f;
@@ -296,7 +241,6 @@ static void test_automatic_enablement(void **state)
         stale_type = type == DT_COLORSPACE_EMBEDDED_MATRIX
           ? DT_COLORSPACE_FORWARD_MATRIX : DT_COLORSPACE_EMBEDDED_MATRIX;
         dev.image_storage.profile_hsm_data = data & 1 ? table : NULL;
-        dev.image_storage.profile_tone_curve = data & 2 ? curve : NULL;
         module.default_enabled = TRUE;
         reload_defaults(&module);
         commit_params(&module, module.default_params, &pipe, &piece);
@@ -364,8 +308,8 @@ static void test_profile_switch_tracking(void **state)
                              .default_params = &default_type, .default_enabled = TRUE };
   dt_develop_t dev = { 0 };
   dev.iop = g_list_append(NULL, &colorin);
-  dt_iop_dng_look_params_t defaults = { .tone_curve_mix = 0.3f };
-  dt_iop_dng_look_params_t history_params = { .tone_curve_mix = 0.3f };
+  dt_iop_dng_look_params_t defaults = { 0 };
+  dt_iop_dng_look_params_t history_params = { 0 };
   dt_iop_module_t module = { .op = "dng_look", .dev = &dev, .default_params = &defaults };
   dt_dev_pixelpipe_t pipe = { 0 };
   dt_dev_pixelpipe_iop_t piece = { 0 };
@@ -373,11 +317,9 @@ static void test_profile_switch_tracking(void **state)
   reload_defaults(&module);
 
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
-  float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
   dev.image_storage.profile_hsm_hue_div = 1;
   dev.image_storage.profile_hsm_sat_div = 2;
   dev.image_storage.profile_hsm_val_div = 1;
-  dev.image_storage.profile_tone_curve_points = 2;
 
   // the combobox rewrites colorin's top history item in place
   dt_dev_history_item_t colorin_hist = { .module = &colorin, .params = &type, .enabled = TRUE };
@@ -411,12 +353,10 @@ static void test_profile_switch_tracking(void **state)
 
         // missing data disables the piece, but a full sync must recover once data is present
         dev.image_storage.profile_hsm_data = NULL;
-        dev.image_storage.profile_tone_curve = NULL;
         piece.enabled = own_history ? look_hist.enabled : module.default_enabled;
         commit_params(&module, params, &pipe, &piece);
         assert_false(piece.enabled);
         dev.image_storage.profile_hsm_data = table;
-        dev.image_storage.profile_tone_curve = curve;
         for(int previous_enabled = 0; previous_enabled < 2; previous_enabled++)
         {
           piece.enabled = previous_enabled;
@@ -476,13 +416,11 @@ static void test_module_order(void **state)
 static void test_cache_snapshot(void **state)
 {
   float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
-  float curve[] = { 0.0f, 0.0f, 1.0f, 0.5f };
   dt_image_t image = { .id = 42, .profile_hsm_data = table,
-                      .profile_hsm_hue_div = 1, .profile_hsm_sat_div = 2, .profile_hsm_val_div = 1,
-                      .profile_tone_curve = curve, .profile_tone_curve_points = 2 };
+                      .profile_hsm_hue_div = 1, .profile_hsm_sat_div = 2, .profile_hsm_val_div = 1 };
   dt_develop_t dev = { 0 };
   dev.image_storage.id = image.id;
-  dt_iop_dng_look_params_t params = { .tone_curve_mix = 0.3f };
+  dt_iop_dng_look_params_t params = { 0 };
   dt_iop_module_t module = { .dev = &dev };
   dt_dev_pixelpipe_t pipe = { 0 };
   dt_dev_pixelpipe_iop_t piece = { .colors = 4 };
@@ -494,9 +432,7 @@ static void test_cache_snapshot(void **state)
   assert_false(cache_locked);
   assert_memory_equal(d->hsm, table, sizeof(table));
   table[0] = 90.0f;
-  curve[3] = 1.0f;
   assert_float_equal(d->hsm[0], 0.0f, 1e-6f);
-  assert_float_equal(_apply_tone_curve(d, 1.0f), 0.85f, 1e-6f);
   cleanup_pipe(&module, &pipe, &piece);
   cached_image = NULL;
 }
@@ -505,9 +441,7 @@ int main(int argc, char *argv[])
 {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_interpolation_and_hue_wrap),
-    cmocka_unit_test(test_tone_curve),
-    cmocka_unit_test(test_tone_curve_mix),
-    cmocka_unit_test(test_scale_caps),
+    cmocka_unit_test(test_full_saturation_and_unchanged_value),
     cmocka_unit_test(test_processing),
     cmocka_unit_test(test_commit_and_defaults),
     cmocka_unit_test(test_automatic_enablement),

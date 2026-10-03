@@ -1971,7 +1971,7 @@ static void update_profile_list(dt_iop_module_t *self)
   // some file formats like jpeg can have an embedded color profile
   // currently we only support jpeg, j2k, tiff and png
   const dt_image_t *cimg = dt_image_cache_get(self->dev->image_storage.id, 'r');
-  const gboolean has_dng_look = cimg && (cimg->profile_hsm_data || cimg->profile_tone_curve);
+  const gboolean has_dng_look = cimg && cimg->profile_hsm_data;
   if(cimg && cimg->profile)
   {
     dt_colorspaces_color_profile_t *prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));

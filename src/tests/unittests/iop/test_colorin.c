@@ -82,17 +82,15 @@ static void test_dng_look_profile_list(void **state)
   dt_iop_colorin_gui_data_t gui = { 0 };
   dt_iop_module_t module = { .dev = &dev, .gui_data = &gui };
   float table[] = { 0.0f, 1.0f, 1.0f };
-  float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
   for(int d65 = 0; d65 < 2; d65++)
     for(int forward = 0; forward < 2; forward++)
-      for(int data = 0; data < 4; data++)
+      for(int data = 0; data < 2; data++)
       {
         dt_mark_colormatrix_invalid(&dev.image_storage.d65_color_matrix[0]);
         dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
         if(d65) dev.image_storage.d65_color_matrix[0] = 1.0f;
         if(forward) dev.image_storage.dng_forward_matrix[0] = 1.0f;
         image.profile_hsm_data = data & 1 ? table : NULL;
-        image.profile_tone_curve = data & 2 ? curve : NULL;
         update_profile_list(&module);
         assert_false(cache_locked);
         int found = 0;

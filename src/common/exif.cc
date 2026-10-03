@@ -1238,10 +1238,6 @@ static void _check_profile_look_table(Exiv2::ExifData &exifData,
   g_free(img->profile_hsm_data);
   img->profile_hsm_data = NULL;
   img->profile_hsm_hue_div = img->profile_hsm_sat_div = img->profile_hsm_val_div = 0;
-  g_free(img->profile_tone_curve);
-  img->profile_tone_curve = NULL;
-  img->profile_tone_curve_points = 0;
-
   Exiv2::ExifData::const_iterator dims_pos =
     exifData.findKey(Exiv2::ExifKey("Exif.Image.ProfileHueSatMapDims"));
   if(dims_pos != exifData.end() && dims_pos->count() == 3)
@@ -1276,19 +1272,6 @@ static void _check_profile_look_table(Exiv2::ExifData &exifData,
     }
   }
 
-  Exiv2::ExifData::const_iterator tc_pos =
-    exifData.findKey(Exiv2::ExifKey("Exif.Image.ProfileToneCurve"));
-  if(tc_pos != exifData.end() && tc_pos->count() >= 4
-     && tc_pos->count() <= G_MAXINT && tc_pos->count() % 2 == 0)
-  {
-    const int n = (int)tc_pos->count();
-    img->profile_tone_curve = (float *)g_malloc_n(n, sizeof(float));
-    for(int i = 0; i < n; i++)
-      img->profile_tone_curve[i] = tc_pos->toFloat(i);
-    img->profile_tone_curve_points = n / 2;
-    dt_print(DT_DEBUG_IMAGEIO, "[exif] found ProfileToneCurve (%d points)",
-             img->profile_tone_curve_points);
-  }
 }
 
 static gboolean _check_dng_opcodes(Exiv2::ExifData &exifData,
@@ -3361,7 +3344,6 @@ int dt_exif_read_blob(uint8_t **buf,
       "Exif.Image.ProfileHueSatMapDims",
       "Exif.Image.ProfileHueSatMapData1",
       "Exif.Image.ProfileHueSatMapData2",
-      "Exif.Image.ProfileToneCurve",
       "Exif.Image.ProfileEmbedPolicy",
       "Exif.Image.ProfileCopyright",
       "Exif.Image.ForwardMatrix1",
