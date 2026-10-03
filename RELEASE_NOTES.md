@@ -101,6 +101,10 @@ changes (where available).
 
 ## UI/UX Improvements
 
+- Added a "DNG forward matrix + look" input profile for images with an
+  embedded DNG look. The plain "DNG forward matrix" profile remains the
+  default and no longer applies the embedded look.
+
 - The code has received a large set of changes in preparation of the
   Gtk4 migration.
   - The code for handling popover menus has been changed.
