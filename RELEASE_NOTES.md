@@ -181,6 +181,12 @@ changes (where available).
 
 ## Other Changes
 
+- A new "DNG embedded look" input color profile applies embedded look
+  tables and tone curves using the embedded D65 matrix. It is available
+  for images with look data and an embedded D65 matrix, but no valid DNG
+  forward matrix. Embedded looks remain available with the "DNG forward
+  matrix" profile, and their activation follows input profile switches.
+
 - A new `.dtdata` sidecar next to the XMP holds per-pixel edit data
   such as raster masks. It is only created for images that use such
   data, and only when sidecar writing is enabled; most images never get
