@@ -1836,6 +1836,8 @@ const char *dt_colorspaces_get_name(dt_colorspaces_color_profile_type_t type,
        return _("Display P3");
      case DT_COLORSPACE_FORWARD_MATRIX:
        return _("DNG forward matrix");
+     case DT_COLORSPACE_FORWARD_MATRIX_LOOK:
+       return _("DNG forward matrix + look");
      case DT_COLORSPACE_LAST:
        break;
   }
@@ -2636,6 +2638,7 @@ gboolean dt_colorspaces_profile_is_wide_gamut(const dt_colorspaces_color_profile
     case DT_COLORSPACE_HLG_P3:
     case DT_COLORSPACE_DISPLAY_P3:
     case DT_COLORSPACE_FORWARD_MATRIX:
+    case DT_COLORSPACE_FORWARD_MATRIX_LOOK:
       return TRUE;
 
     // sRGB primaries (gamma may differ but gamut is the same)

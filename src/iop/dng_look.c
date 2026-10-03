@@ -93,7 +93,7 @@ static gboolean _forward_matrix_selected(const dt_develop_t *dev)
 
   const dt_colorspaces_color_profile_type_t *type =
     params ? colorin->get_p(params, "type") : NULL;
-  return enabled && type && *type == DT_COLORSPACE_FORWARD_MATRIX;
+  return enabled && type && *type == DT_COLORSPACE_FORWARD_MATRIX_LOOK;
 }
 
 static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
@@ -191,7 +191,7 @@ void commit_params(dt_iop_module_t *self,
   }
 
   // forward-matrix presence alone is not a trust signal: Pixel 7a looks can render badly here
-  // require the selected forward-matrix color pipeline, not just available metadata
+  // require the explicit forward-matrix + look selection, not just available metadata
   // pipe sync holds history_mutex, and the last active history entry wins regardless of commit order
   const gboolean enabled =
     dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
@@ -247,10 +247,10 @@ void process(dt_iop_module_t *self,
 
   const dt_iop_dng_look_data_t *d = piece->data;
   // synch_top can change only colorin: never apply a stale look after switching away
-  // switching to forward matrix while this piece is disabled waits for the next full pipe sync
+  // switching to forward matrix + look while this piece is disabled waits for the next full pipe sync
   const dt_iop_order_iccprofile_info_t *input_profile =
     dt_ioppr_get_pipe_input_profile_info(piece->pipe);
-  if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX
+  if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX_LOOK
      || (!d->hsm && !d->has_tone_curve))
   {
     memcpy(ovoid, ivoid, (size_t)4 * roi_out->width * roi_out->height * sizeof(float));

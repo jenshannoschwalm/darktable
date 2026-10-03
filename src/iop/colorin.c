@@ -1371,7 +1371,7 @@ void commit_params(dt_iop_module_t *self,
     }
     dt_image_cache_read_release(cimg);
   }
-  if(type == DT_COLORSPACE_FORWARD_MATRIX)
+  if(type == DT_COLORSPACE_FORWARD_MATRIX || type == DT_COLORSPACE_FORWARD_MATRIX_LOOK)
   {
     if(dt_is_valid_colormatrix(pipe->image.dng_forward_matrix[0]))
     {
@@ -1973,6 +1973,7 @@ static void update_profile_list(dt_iop_module_t *self)
     g->image_profiles = g_list_append(g->image_profiles, prof);
     prof->in_pos = ++pos;
   }
+  const gboolean has_dng_look = cimg && (cimg->profile_hsm_data || cimg->profile_tone_curve);
   dt_image_cache_read_release(cimg);
   // use the matrix embedded in some DNGs and EXRs
   if(dt_is_valid_colormatrix(self->dev->image_storage.d65_color_matrix[0]))
@@ -1985,8 +1986,7 @@ static void update_profile_list(dt_iop_module_t *self)
     prof->in_pos = ++pos;
   }
 
-  // use the DNG forward matrix if present -- gives the "as intended by
-  // the DNG converter" look rather than the purely colorimetric one
+  // offer the embedded look separately from the colorimetric forward matrix
   if(dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0]))
   {
     dt_colorspaces_color_profile_t *prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));
@@ -1995,6 +1995,15 @@ static void update_profile_list(dt_iop_module_t *self)
     prof->type = DT_COLORSPACE_FORWARD_MATRIX;
     g->image_profiles = g_list_append(g->image_profiles, prof);
     prof->in_pos = ++pos;
+    if(has_dng_look)
+    {
+      prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));
+      g_strlcpy(prof->name, dt_colorspaces_get_name(DT_COLORSPACE_FORWARD_MATRIX_LOOK, ""),
+                sizeof(prof->name));
+      prof->type = DT_COLORSPACE_FORWARD_MATRIX_LOOK;
+      g->image_profiles = g_list_append(g->image_profiles, prof);
+      prof->in_pos = ++pos;
+    }
   }
 
   if(dt_is_valid_colormatrix(self->dev->image_storage.adobe_XYZ_to_CAM[0][0])
