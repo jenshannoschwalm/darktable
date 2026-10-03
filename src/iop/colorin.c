@@ -527,7 +527,7 @@ static void _profile_changed(GtkWidget *widget, dt_iop_module_t *self)
       p->type = pp->type;
       memcpy(p->filename, pp->filename, sizeof(p->filename));
       dt_dev_add_history_item(darktable.develop, self, TRUE);
-      // a merged top history item only re-commits colorin (pixelpipe_hb.c:914),
+      // a merged top history item only re-commits colorin (dt_dev_pixelpipe_synch_top),
       // but dng_look derives its enabled state from this profile in commit_params
       if(forward_switch)
         dt_dev_pipe_synch_all(self->dev);
