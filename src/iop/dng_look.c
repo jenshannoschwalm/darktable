@@ -247,7 +247,7 @@ void process(dt_iop_module_t *self,
 
   const dt_iop_dng_look_data_t *d = piece->data;
   // synch_top can change only colorin: never apply a stale look after switching away
-  // switching to forward matrix while this piece is disabled waits for the next full pipe sync
+  // colorin requests a full pipe sync on such a switch so commit_params re-evaluates enablement
   const dt_iop_order_iccprofile_info_t *input_profile =
     dt_ioppr_get_pipe_input_profile_info(piece->pipe);
   if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX

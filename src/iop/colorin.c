@@ -522,9 +522,15 @@ static void _profile_changed(GtkWidget *widget, dt_iop_module_t *self)
     dt_colorspaces_color_profile_t *pp = prof->data;
     if(pp->in_pos == pos)
     {
+      const gboolean forward_switch =
+        (p->type == DT_COLORSPACE_FORWARD_MATRIX) != (pp->type == DT_COLORSPACE_FORWARD_MATRIX);
       p->type = pp->type;
       memcpy(p->filename, pp->filename, sizeof(p->filename));
       dt_dev_add_history_item(darktable.develop, self, TRUE);
+      // a merged top history item only re-commits colorin (pixelpipe_hb.c:914),
+      // but dng_look derives its enabled state from this profile in commit_params
+      if(forward_switch)
+        dt_dev_pipe_synch_all(self->dev);
 
       DT_CONTROL_SIGNAL_RAISE(DT_SIGNAL_CONTROL_PROFILE_USER_CHANGED,
                               DT_COLORSPACES_PROFILE_TYPE_INPUT);
