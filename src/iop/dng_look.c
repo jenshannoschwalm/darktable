@@ -71,7 +71,7 @@ void reload_defaults(dt_iop_module_t *self)
   self->default_enabled = FALSE;
 }
 
-static gboolean _forward_matrix_selected(const dt_develop_t *dev)
+static gboolean _dng_look_profile_selected(const dt_develop_t *dev)
 {
   const dt_iop_module_t *colorin = dt_iop_get_module_from_list(dev->iop, "colorin");
   if(!colorin || !colorin->get_p || !colorin->default_params
@@ -93,7 +93,10 @@ static gboolean _forward_matrix_selected(const dt_develop_t *dev)
 
   const dt_colorspaces_color_profile_type_t *type =
     params ? colorin->get_p(params, "type") : NULL;
-  return enabled && type && *type == DT_COLORSPACE_FORWARD_MATRIX;
+  return enabled && type
+    && ((*type == DT_COLORSPACE_FORWARD_MATRIX
+         && dt_is_valid_colormatrix(dev->image_storage.dng_forward_matrix[0]))
+        || *type == DT_COLORSPACE_DNG_LOOK);
 }
 
 static gboolean _build_tone_curve(dt_iop_dng_look_data_t *d,
@@ -190,12 +193,10 @@ void commit_params(dt_iop_module_t *self,
     return;
   }
 
-  // forward-matrix presence alone is not a trust signal: Pixel 7a looks can render badly here
-  // require the selected forward-matrix color pipeline, not just available metadata
+  // require a look-capable profile selection, not just available metadata
   // pipe sync holds history_mutex, and the last active history entry wins regardless of commit order
   const gboolean enabled =
-    dt_is_valid_colormatrix(self->dev->image_storage.dng_forward_matrix[0])
-    && _forward_matrix_selected(self->dev)
+    _dng_look_profile_selected(self->dev)
     && (img->profile_hsm_data != NULL || img->profile_tone_curve != NULL)
     && !g_list_find_custom(self->dev->module_filter_out, self->op, (GCompareFunc)g_strcmp0);
   // auto-enable defaults, but preserve an explicit disable recorded in history
@@ -247,10 +248,11 @@ void process(dt_iop_module_t *self,
 
   const dt_iop_dng_look_data_t *d = piece->data;
   // synch_top can change only colorin: never apply a stale look after switching away
-  // switching to forward matrix while this piece is disabled waits for the next full pipe sync
+  // colorin requests full sync on look-profile transitions to re-evaluate enablement
   const dt_iop_order_iccprofile_info_t *input_profile =
     dt_ioppr_get_pipe_input_profile_info(piece->pipe);
-  if(!input_profile || input_profile->type != DT_COLORSPACE_FORWARD_MATRIX
+  if(!input_profile || (input_profile->type != DT_COLORSPACE_FORWARD_MATRIX
+                       && input_profile->type != DT_COLORSPACE_DNG_LOOK)
      || (!d->hsm && !d->has_tone_curve))
   {
     memcpy(ovoid, ivoid, (size_t)4 * roi_out->width * roi_out->height * sizeof(float));

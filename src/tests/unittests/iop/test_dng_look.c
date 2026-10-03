@@ -181,6 +181,12 @@ static void test_processing(void **state)
   assert_float_equal(out[0], 0.125f, 1e-6f);
   assert_float_equal(out[1], 0.25f, 1e-6f);
 
+  profile.type = DT_COLORSPACE_DNG_LOOK;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_float_equal(out[0], 0.125f, 1e-6f);
+  assert_float_equal(out[1], 0.25f, 1e-6f);
+  assert_float_equal(out[3], in[3], 1e-6f);
+
   profile.type = DT_COLORSPACE_EMBEDDED_MATRIX;
   process(&module, &piece, in, out, &roi, &roi);
   assert_memory_equal(out, in, sizeof(in));
@@ -275,22 +281,28 @@ static void test_automatic_enablement(void **state)
   dev.image_storage.profile_hsm_val_div = 1;
   dev.image_storage.profile_tone_curve_points = 2;
 
+  const dt_colorspaces_color_profile_type_t types[] =
+    { DT_COLORSPACE_FORWARD_MATRIX, DT_COLORSPACE_DNG_LOOK,
+      DT_COLORSPACE_EMBEDDED_MATRIX, DT_COLORSPACE_LIN_REC709 };
   for(int matrix = 0; matrix < 2; matrix++)
-    for(int forward = 0; forward < 2; forward++)
+    for(int profile = 0; profile < (int)G_N_ELEMENTS(types); profile++)
       for(int data = 0; data < 4; data++)
       {
         if(matrix)
           dev.image_storage.dng_forward_matrix[0] = 1.0f;
         else
           dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
-        type = forward ? DT_COLORSPACE_FORWARD_MATRIX : DT_COLORSPACE_EMBEDDED_MATRIX;
-        stale_type = forward ? DT_COLORSPACE_EMBEDDED_MATRIX : DT_COLORSPACE_FORWARD_MATRIX;
+        type = types[profile];
+        stale_type = type == DT_COLORSPACE_EMBEDDED_MATRIX
+          ? DT_COLORSPACE_FORWARD_MATRIX : DT_COLORSPACE_EMBEDDED_MATRIX;
         dev.image_storage.profile_hsm_data = data & 1 ? table : NULL;
         dev.image_storage.profile_tone_curve = data & 2 ? curve : NULL;
         module.default_enabled = TRUE;
         reload_defaults(&module);
         commit_params(&module, module.default_params, &pipe, &piece);
-        assert_int_equal(piece.enabled, matrix && forward && data != 0);
+        assert_int_equal(piece.enabled,
+                         ((matrix && type == DT_COLORSPACE_FORWARD_MATRIX)
+                          || type == DT_COLORSPACE_DNG_LOOK) && data != 0);
       }
 
   type = DT_COLORSPACE_FORWARD_MATRIX;
@@ -341,6 +353,101 @@ static void test_automatic_enablement(void **state)
   assert_true(flags() & IOP_FLAGS_HIDDEN);
   cleanup_pipe(&module, &pipe, &piece);
   g_list_free(dev.history);
+}
+
+static void test_profile_switch_tracking(void **state)
+{
+  dt_colorspaces_color_profile_type_t default_type = DT_COLORSPACE_EMBEDDED_MATRIX;
+  dt_colorspaces_color_profile_type_t type = DT_COLORSPACE_FORWARD_MATRIX;
+  dt_iop_module_so_t colorin_so = { .op = "colorin" };
+  dt_iop_module_t colorin = { .so = &colorin_so, .get_p = _colorin_get_p,
+                             .default_params = &default_type, .default_enabled = TRUE };
+  dt_develop_t dev = { 0 };
+  dev.iop = g_list_append(NULL, &colorin);
+  dt_iop_dng_look_params_t defaults = { .tone_curve_mix = 0.3f };
+  dt_iop_dng_look_params_t history_params = { .tone_curve_mix = 0.3f };
+  dt_iop_module_t module = { .op = "dng_look", .dev = &dev, .default_params = &defaults };
+  dt_dev_pixelpipe_t pipe = { 0 };
+  dt_dev_pixelpipe_iop_t piece = { 0 };
+  init_pipe(&module, &pipe, &piece);
+  reload_defaults(&module);
+
+  float table[] = { 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f };
+  float curve[] = { 0.0f, 0.0f, 1.0f, 1.0f };
+  dev.image_storage.profile_hsm_hue_div = 1;
+  dev.image_storage.profile_hsm_sat_div = 2;
+  dev.image_storage.profile_hsm_val_div = 1;
+  dev.image_storage.profile_tone_curve_points = 2;
+
+  // the combobox rewrites colorin's top history item in place
+  dt_dev_history_item_t colorin_hist = { .module = &colorin, .params = &type, .enabled = TRUE };
+  dev.history = g_list_append(NULL, &colorin_hist);
+  dev.history_end = 1;
+  dt_dev_history_item_t look_hist = { .module = &module, .params = &history_params, .enabled = TRUE };
+  const dt_colorspaces_color_profile_type_t switches[] =
+    { DT_COLORSPACE_FORWARD_MATRIX, DT_COLORSPACE_EMBEDDED_MATRIX, DT_COLORSPACE_DNG_LOOK,
+      DT_COLORSPACE_STANDARD_MATRIX, DT_COLORSPACE_DNG_LOOK, DT_COLORSPACE_FORWARD_MATRIX,
+      DT_COLORSPACE_DNG_LOOK, DT_COLORSPACE_EMBEDDED_MATRIX, DT_COLORSPACE_FORWARD_MATRIX };
+
+  for(int own_history = 0; own_history < 2; own_history++)
+  {
+    if(own_history)
+    {
+      dev.history = g_list_append(dev.history, &look_hist);
+      dev.history_end = 2;
+    }
+    for(int matrix = 0; matrix < 2; matrix++)
+    {
+      if(matrix)
+        dev.image_storage.dng_forward_matrix[0] = 1.0f;
+      else
+        dt_mark_colormatrix_invalid(&dev.image_storage.dng_forward_matrix[0]);
+      for(int i = 0; i < (int)G_N_ELEMENTS(switches); i++)
+      {
+        type = switches[i];
+        const gboolean expected = (matrix && type == DT_COLORSPACE_FORWARD_MATRIX)
+                                  || type == DT_COLORSPACE_DNG_LOOK;
+        dt_iop_params_t *params = own_history ? look_hist.params : module.default_params;
+
+        // missing data disables the piece, but a full sync must recover once data is present
+        dev.image_storage.profile_hsm_data = NULL;
+        dev.image_storage.profile_tone_curve = NULL;
+        piece.enabled = own_history ? look_hist.enabled : module.default_enabled;
+        commit_params(&module, params, &pipe, &piece);
+        assert_false(piece.enabled);
+        dev.image_storage.profile_hsm_data = table;
+        dev.image_storage.profile_tone_curve = curve;
+        for(int previous_enabled = 0; previous_enabled < 2; previous_enabled++)
+        {
+          piece.enabled = previous_enabled;
+          // history replay restores the user's enabled flag before committing the piece
+          if(own_history) piece.enabled = look_hist.enabled;
+          commit_params(&module, params, &pipe, &piece);
+          assert_int_equal(piece.enabled, expected);
+          commit_params(&module, params, &pipe, &piece);
+          assert_int_equal(piece.enabled, expected);
+        }
+      }
+    }
+  }
+
+  // an explicit disable in the look's history wins for both look-capable profiles
+  dev.image_storage.dng_forward_matrix[0] = 1.0f;
+  for(int i = 0; i < 2; i++)
+  {
+    type = i ? DT_COLORSPACE_DNG_LOOK : DT_COLORSPACE_FORWARD_MATRIX;
+    for(int enabled = 0; enabled < 2; enabled++)
+    {
+      look_hist.enabled = enabled;
+      piece.enabled = look_hist.enabled;
+      commit_params(&module, look_hist.params, &pipe, &piece);
+      assert_int_equal(piece.enabled, enabled);
+    }
+  }
+
+  cleanup_pipe(&module, &pipe, &piece);
+  g_list_free(dev.history);
+  g_list_free(dev.iop);
 }
 
 static void test_module_order(void **state)
@@ -404,6 +511,7 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_processing),
     cmocka_unit_test(test_commit_and_defaults),
     cmocka_unit_test(test_automatic_enablement),
+    cmocka_unit_test(test_profile_switch_tracking),
     cmocka_unit_test(test_module_order),
     cmocka_unit_test(test_cache_snapshot),
   };
