@@ -252,7 +252,7 @@ static void test_work_profile_independence(void **state)
       process(&module, &piece, in, out, &roi, &roi);
       dt_apply_transposed_color_matrix(out, work_profile.matrix_in_transposed, corrected_XYZ);
       dt_XYZ_to_prophotorgb(corrected_XYZ, corrected_rgb);
-      for_each_channel(c)
+      for_three_channels(c)
         assert_float_equal(corrected_rgb[c], expected[c], 2e-6f);
       assert_float_equal(out[3], in[3], 0.0f);
     }

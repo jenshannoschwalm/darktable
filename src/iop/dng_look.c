@@ -256,6 +256,7 @@ void process(dt_iop_module_t *self,
           dt_aligned_pixel_t XYZ;
           dt_prophotorgb_to_XYZ(look_rgb, XYZ);
           dt_apply_transposed_color_matrix(XYZ, work_profile->matrix_out_transposed, rgb);
+          rgb[3] = in[3];
         }
         else
         {
