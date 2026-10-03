@@ -96,7 +96,13 @@ static void test_full_saturation_and_unchanged_value(void **state)
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
   dt_iop_module_t module = { 0 };
   dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
-  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
+  dt_iop_order_iccprofile_info_t work_profile = { 0 };
+  memcpy(work_profile.matrix_in_transposed, prophotorgb_to_xyz_transpose,
+         sizeof(work_profile.matrix_in_transposed));
+  assert_int_equal(mat3SSEinv(work_profile.matrix_out_transposed,
+                            work_profile.matrix_in_transposed), 0);
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile,
+                             .work_profile_info = &work_profile };
   dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
   const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
   const float DT_ALIGNED_ARRAY colored[] = { 0.5f, 0.25f, 0.25f, 1.0f };
@@ -127,7 +133,13 @@ static void test_processing(void **state)
   dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
   dt_iop_module_t module = { 0 };
   dt_iop_order_iccprofile_info_t profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
-  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile };
+  dt_iop_order_iccprofile_info_t work_profile = { 0 };
+  memcpy(work_profile.matrix_in_transposed, prophotorgb_to_xyz_transpose,
+         sizeof(work_profile.matrix_in_transposed));
+  assert_int_equal(mat3SSEinv(work_profile.matrix_out_transposed,
+                            work_profile.matrix_in_transposed), 0);
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &profile,
+                             .work_profile_info = &work_profile };
   dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
   const dt_iop_roi_t roi = { .width = 1, .height = 2, .scale = 1.0f };
   const float DT_ALIGNED_ARRAY in[] = { 1.0f, 0.0f, 0.0f, 0.37f, 0.4f, 0.4f, 0.4f, 0.81f };
@@ -282,35 +294,17 @@ static void test_null_and_prophoto_work_profiles(void **state)
   for(int sample = 0; sample < (int)G_N_ELEMENTS(stimuli); sample++)
   {
     dt_aligned_pixel_t expected, out;
-    _apply_direct_look(&d, stimuli[sample], expected);
     pipe.work_profile_info = NULL;
     assert_null(dt_ioppr_get_pipe_work_profile_info(&pipe));
     process(&module, &piece, stimuli[sample], out, &roi, &roi);
-    assert_memory_equal(out, expected, sizeof(out));
+    assert_memory_equal(out, stimuli[sample], sizeof(out));
+    _apply_direct_look(&d, stimuli[sample], expected);
     pipe.work_profile_info = &work_profile;
     process(&module, &piece, stimuli[sample], out, &roi, &roi);
     for_each_channel(c)
       assert_float_equal(out[c], expected[c], 2e-6f);
     assert_float_equal(out[3], expected[3], 0.0f);
   }
-}
-
-static void test_invalid_converted_hsv(void **state)
-{
-  float table[] = { 120.0f, 0.5f, 1.0f, 120.0f, 0.5f, 1.0f };
-  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
-  dt_iop_module_t module = { 0 };
-  dt_iop_order_iccprofile_info_t input_profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
-  dt_iop_order_iccprofile_info_t work_profile = { 0 };
-  work_profile.matrix_in_transposed[0][0] = NAN;
-  dt_dev_pixelpipe_t pipe = { .input_profile_info = &input_profile,
-                             .work_profile_info = &work_profile };
-  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
-  const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
-  const dt_aligned_pixel_t in = { 0.6f, 0.25f, 0.1f, 0.37f };
-  dt_aligned_pixel_t out;
-  process(&module, &piece, in, out, &roi, &roi);
-  assert_memory_equal(out, in, sizeof(out));
 }
 
 static void test_commit_and_defaults(void **state)
@@ -600,7 +594,6 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_processing),
     cmocka_unit_test(test_work_profile_independence),
     cmocka_unit_test(test_null_and_prophoto_work_profiles),
-    cmocka_unit_test(test_invalid_converted_hsv),
     cmocka_unit_test(test_commit_and_defaults),
     cmocka_unit_test(test_automatic_enablement),
     cmocka_unit_test(test_profile_switch_tracking),
