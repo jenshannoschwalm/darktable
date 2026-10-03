@@ -1384,6 +1384,8 @@ void commit_params(dt_iop_module_t *self,
     else
       type = DT_COLORSPACE_EMBEDDED_MATRIX;
   }
+  if(type == DT_COLORSPACE_DNG_LOOK)
+    type = DT_COLORSPACE_EMBEDDED_MATRIX;
   if(type == DT_COLORSPACE_EMBEDDED_MATRIX)
   {
     // embedded matrix, hopefully D65
@@ -1964,6 +1966,7 @@ static void update_profile_list(dt_iop_module_t *self)
   // some file formats like jpeg can have an embedded color profile
   // currently we only support jpeg, j2k, tiff and png
   const dt_image_t *cimg = dt_image_cache_get(self->dev->image_storage.id, 'r');
+  const gboolean has_dng_look = cimg && (cimg->profile_hsm_data || cimg->profile_tone_curve);
   if(cimg && cimg->profile)
   {
     dt_colorspaces_color_profile_t *prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));
@@ -1993,6 +1996,15 @@ static void update_profile_list(dt_iop_module_t *self)
     g_strlcpy(prof->name, dt_colorspaces_get_name(DT_COLORSPACE_FORWARD_MATRIX, ""),
               sizeof(prof->name));
     prof->type = DT_COLORSPACE_FORWARD_MATRIX;
+    g->image_profiles = g_list_append(g->image_profiles, prof);
+    prof->in_pos = ++pos;
+  }
+  else if(has_dng_look)
+  {
+    dt_colorspaces_color_profile_t *prof = calloc(1, sizeof(dt_colorspaces_color_profile_t));
+    g_strlcpy(prof->name, dt_colorspaces_get_name(DT_COLORSPACE_DNG_LOOK, ""),
+              sizeof(prof->name));
+    prof->type = DT_COLORSPACE_DNG_LOOK;
     g->image_profiles = g_list_append(g->image_profiles, prof);
     prof->in_pos = ++pos;
   }
