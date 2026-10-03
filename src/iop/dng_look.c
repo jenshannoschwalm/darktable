@@ -211,6 +211,10 @@ void process(dt_iop_module_t *self,
     return;
   }
 
+  // the DNG hue/saturation tables use ProPhoto primaries, independently of the working profile
+  const dt_iop_order_iccprofile_info_t *work_profile =
+    dt_ioppr_get_pipe_work_profile_info(piece->pipe);
+
   DT_OMP_FOR(collapse(2))
   for(size_t row = 0; row < roi_out->height; row++)
   {
@@ -221,9 +225,21 @@ void process(dt_iop_module_t *self,
       dt_aligned_pixel_t rgb = { in[0], in[1], in[2], in[3] };
       if(isfinite(rgb[0]) && isfinite(rgb[1]) && isfinite(rgb[2]))
       {
+        dt_aligned_pixel_t look_rgb;
+        if(work_profile)
+        {
+          dt_aligned_pixel_t XYZ;
+          dt_apply_transposed_color_matrix(rgb, work_profile->matrix_in_transposed, XYZ);
+          dt_XYZ_to_prophotorgb(XYZ, look_rgb);
+        }
+        else
+        {
+          for_each_channel(c) look_rgb[c] = rgb[c];
+        }
+
         dt_aligned_pixel_t hsv;
         dt_aligned_pixel_t correction;
-        dt_RGB_2_HSV(rgb, hsv);
+        dt_RGB_2_HSV(look_rgb, hsv);
         if(!isfinite(hsv[0]) || !isfinite(hsv[1]) || !isfinite(hsv[2]))
         {
           copy_pixel(out, rgb);
@@ -233,7 +249,19 @@ void process(dt_iop_module_t *self,
         hsv[0] += correction[0] / 360.0f;
         hsv[0] -= floorf(hsv[0]);
         hsv[1] = CLIP(hsv[1] * correction[1]);
-        dt_HSV_2_RGB(hsv, rgb);
+        dt_HSV_2_RGB(hsv, look_rgb);
+
+        if(work_profile)
+        {
+          dt_aligned_pixel_t XYZ;
+          dt_prophotorgb_to_XYZ(look_rgb, XYZ);
+          dt_apply_transposed_color_matrix(XYZ, work_profile->matrix_out_transposed, rgb);
+          rgb[3] = in[3];
+        }
+        else
+        {
+          for_each_channel(c) rgb[c] = look_rgb[c];
+        }
       }
       copy_pixel(out, rgb);
     }

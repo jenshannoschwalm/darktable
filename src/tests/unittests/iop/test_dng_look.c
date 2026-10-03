@@ -27,6 +27,7 @@
 
 #include "iop/dng_look.c"
 #include "common/iop_order.h"
+#include "common/matrices.h"
 
 #undef dt_image_cache_get
 #undef dt_image_cache_read_release
@@ -156,6 +157,160 @@ static void test_processing(void **state)
   d.hsm = NULL;
   process(&module, &piece, in, out, &roi, &roi);
   assert_memory_equal(out, in, sizeof(in));
+}
+
+static void _init_work_profile(dt_iop_order_iccprofile_info_t *work_profile,
+                               const cmsCIExyY *whitepoint,
+                               const cmsCIExyYTRIPLE *primaries)
+{
+  cmsToneCurve *gamma = cmsBuildGamma(NULL, 1.0);
+  assert_non_null(gamma);
+  cmsToneCurve *curves[] = { gamma, gamma, gamma };
+  cmsHPROFILE profile = cmsCreateRGBProfile(whitepoint, primaries, curves);
+  cmsFreeToneCurve(gamma);
+  assert_non_null(profile);
+  const cmsTagSignature tags[] = { cmsSigRedColorantTag, cmsSigGreenColorantTag,
+                                   cmsSigBlueColorantTag };
+  for(int c = 0; c < 3; c++)
+  {
+    const cmsCIEXYZ *colorant = cmsReadTag(profile, tags[c]);
+    assert_non_null(colorant);
+    work_profile->matrix_in_transposed[c][0] = colorant->X;
+    work_profile->matrix_in_transposed[c][1] = colorant->Y;
+    work_profile->matrix_in_transposed[c][2] = colorant->Z;
+  }
+  assert_int_equal(mat3SSEinv(work_profile->matrix_out_transposed,
+                            work_profile->matrix_in_transposed), 0);
+  cmsCloseProfile(profile);
+}
+
+static void _apply_direct_look(const dt_iop_dng_look_data_t *d,
+                               const dt_aligned_pixel_t rgb,
+                               dt_aligned_pixel_t out)
+{
+  dt_aligned_pixel_t hsv;
+  dt_aligned_pixel_t correction;
+  dt_RGB_2_HSV(rgb, hsv);
+  _lookup_hsm(d, hsv, correction);
+  hsv[0] += correction[0] / 360.0f;
+  hsv[0] -= floorf(hsv[0]);
+  hsv[1] = CLIP(hsv[1] * correction[1]);
+  dt_HSV_2_RGB(hsv, out);
+  out[3] = rgb[3];
+}
+
+static void test_work_profile_independence(void **state)
+{
+  float table[36 * 3 * 2 * 3];
+  for(int v = 0; v < 2; v++)
+    for(int h = 0; h < 36; h++)
+      for(int s = 0; s < 3; s++)
+      {
+        const int index = 3 * ((v * 36 + h) * 3 + s);
+        table[index] = 2.0f * h + 3.0f * s + 5.0f * v;
+        table[index + 1] = 0.5f + 0.01f * h + 0.1f * s + 0.05f * v;
+        table[index + 2] = 2.0f;
+      }
+  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 36, .sat_div = 3, .val_div = 2 };
+  dt_iop_module_t module = { 0 };
+  dt_iop_order_iccprofile_info_t input_profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &input_profile };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
+  const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
+  const cmsCIExyY whitepoints[] = { { 0.3127, 0.3290, 1.0 }, { 0.3127, 0.3290, 1.0 },
+                                   { 0.3457, 0.3585, 1.0 } };
+  const cmsCIExyYTRIPLE primaries[] = {
+    { { 0.64, 0.33, 1.0 }, { 0.30, 0.60, 1.0 }, { 0.15, 0.06, 1.0 } },
+    { { 0.708, 0.292, 1.0 }, { 0.170, 0.797, 1.0 }, { 0.131, 0.046, 1.0 } },
+    { { 0.7347, 0.2653, 1.0 }, { 0.1596, 0.8404, 1.0 }, { 0.0366, 0.0001, 1.0 } },
+  };
+  const dt_aligned_pixel_t stimuli[] = {
+    { 0.6f, 0.25f, 0.1f, 0.37f },
+    { 0.1f, 0.6f, 0.25f, 0.81f },
+    { 0.25f, 0.1f, 0.6f, 0.5f },
+  };
+  gboolean different_raw_bin = FALSE;
+  for(int sample = 0; sample < (int)G_N_ELEMENTS(stimuli); sample++)
+  {
+    dt_aligned_pixel_t XYZ, look_rgb, expected, reference_hsv;
+    dt_linearRGB_to_XYZ(stimuli[sample], XYZ);
+    dt_XYZ_to_prophotorgb(XYZ, look_rgb);
+    look_rgb[3] = stimuli[sample][3];
+    dt_RGB_2_HSV(look_rgb, reference_hsv);
+    _apply_direct_look(&d, look_rgb, expected);
+    for(int profile = 0; profile < (int)G_N_ELEMENTS(primaries); profile++)
+    {
+      dt_iop_order_iccprofile_info_t work_profile = { 0 };
+      _init_work_profile(&work_profile, &whitepoints[profile], &primaries[profile]);
+      pipe.work_profile_info = &work_profile;
+      dt_aligned_pixel_t in, out, raw_hsv, corrected_XYZ, corrected_rgb;
+      dt_apply_transposed_color_matrix(XYZ, work_profile.matrix_out_transposed, in);
+      in[3] = stimuli[sample][3];
+      dt_RGB_2_HSV(in, raw_hsv);
+      different_raw_bin |= (int)(raw_hsv[0] * d.hue_div)
+                           != (int)(reference_hsv[0] * d.hue_div);
+      process(&module, &piece, in, out, &roi, &roi);
+      dt_apply_transposed_color_matrix(out, work_profile.matrix_in_transposed, corrected_XYZ);
+      dt_XYZ_to_prophotorgb(corrected_XYZ, corrected_rgb);
+      for_three_channels(c)
+        assert_float_equal(corrected_rgb[c], expected[c], 2e-6f);
+      assert_float_equal(out[3], in[3], 0.0f);
+    }
+  }
+  assert_true(different_raw_bin);
+}
+
+static void test_null_and_prophoto_work_profiles(void **state)
+{
+  float table[] = { 30.0f, 0.6f, 2.0f, 90.0f, 1.4f, 0.5f };
+  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
+  dt_iop_module_t module = { 0 };
+  dt_iop_order_iccprofile_info_t input_profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &input_profile };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
+  const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
+  dt_iop_order_iccprofile_info_t work_profile = { 0 };
+  memcpy(work_profile.matrix_in_transposed, prophotorgb_to_xyz_transpose,
+         sizeof(work_profile.matrix_in_transposed));
+  assert_int_equal(mat3SSEinv(work_profile.matrix_out_transposed,
+                            work_profile.matrix_in_transposed), 0);
+  const dt_aligned_pixel_t stimuli[] = {
+    { 0.6f, 0.25f, 0.1f, 0.37f }, { 0.1f, 0.6f, 0.25f, 0.81f },
+    { 0.25f, 0.1f, 0.6f, 0.5f }, { 0.4f, 0.4f, 0.4f, 1.0f },
+    { 0.0f, 0.0f, 0.0f, 0.0f },
+  };
+  for(int sample = 0; sample < (int)G_N_ELEMENTS(stimuli); sample++)
+  {
+    dt_aligned_pixel_t expected, out;
+    _apply_direct_look(&d, stimuli[sample], expected);
+    pipe.work_profile_info = NULL;
+    assert_null(dt_ioppr_get_pipe_work_profile_info(&pipe));
+    process(&module, &piece, stimuli[sample], out, &roi, &roi);
+    assert_memory_equal(out, expected, sizeof(out));
+    pipe.work_profile_info = &work_profile;
+    process(&module, &piece, stimuli[sample], out, &roi, &roi);
+    for_each_channel(c)
+      assert_float_equal(out[c], expected[c], 2e-6f);
+    assert_float_equal(out[3], expected[3], 0.0f);
+  }
+}
+
+static void test_invalid_converted_hsv(void **state)
+{
+  float table[] = { 120.0f, 0.5f, 1.0f, 120.0f, 0.5f, 1.0f };
+  dt_iop_dng_look_data_t d = { .hsm = table, .hue_div = 1, .sat_div = 2, .val_div = 1 };
+  dt_iop_module_t module = { 0 };
+  dt_iop_order_iccprofile_info_t input_profile = { .type = DT_COLORSPACE_FORWARD_MATRIX };
+  dt_iop_order_iccprofile_info_t work_profile = { 0 };
+  work_profile.matrix_in_transposed[0][0] = NAN;
+  dt_dev_pixelpipe_t pipe = { .input_profile_info = &input_profile,
+                             .work_profile_info = &work_profile };
+  dt_dev_pixelpipe_iop_t piece = { .data = &d, .colors = 4, .pipe = &pipe };
+  const dt_iop_roi_t roi = { .width = 1, .height = 1, .scale = 1.0f };
+  const dt_aligned_pixel_t in = { 0.6f, 0.25f, 0.1f, 0.37f };
+  dt_aligned_pixel_t out;
+  process(&module, &piece, in, out, &roi, &roi);
+  assert_memory_equal(out, in, sizeof(out));
 }
 
 static void test_commit_and_defaults(void **state)
@@ -443,6 +598,9 @@ int main(int argc, char *argv[])
     cmocka_unit_test(test_interpolation_and_hue_wrap),
     cmocka_unit_test(test_full_saturation_and_unchanged_value),
     cmocka_unit_test(test_processing),
+    cmocka_unit_test(test_work_profile_independence),
+    cmocka_unit_test(test_null_and_prophoto_work_profiles),
+    cmocka_unit_test(test_invalid_converted_hsv),
     cmocka_unit_test(test_commit_and_defaults),
     cmocka_unit_test(test_automatic_enablement),
     cmocka_unit_test(test_profile_switch_tracking),
