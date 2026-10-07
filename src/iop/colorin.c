@@ -287,10 +287,12 @@ static void _process_dng_look(float *data,
   }
 }
 
-static void _commit_hsm(dt_iop_colorin_data_t *d, dt_image_t *img)
+static void _commit_hsm(dt_iop_colorin_data_t *d, const dt_imgid_t imgid)
 {
+  // pipe->image borrows its table; keep the cache locked through validation and copying
+  const dt_image_t *img = dt_image_cache_get(imgid, 'r');
   // safety check before committing
-  if(img->profile_hsm_data
+  if(img && img->profile_hsm_data
       && img->profile_hsm_hue_div >= 1
       && img->profile_hsm_sat_div >= 2
       && img->profile_hsm_val_div >= 1
@@ -299,6 +301,11 @@ static void _commit_hsm(dt_iop_colorin_data_t *d, dt_image_t *img)
     const int count = 3 * img->profile_hsm_hue_div
                         * img->profile_hsm_sat_div
                         * img->profile_hsm_val_div;
+    if((size_t)count > img->profile_hsm_data_size / sizeof(float))
+    {
+      dt_image_cache_read_release(img);
+      return;
+    }
     gboolean valid = TRUE;
     for(int i = 0; i < count; i++)
     {
@@ -311,13 +318,21 @@ static void _commit_hsm(dt_iop_colorin_data_t *d, dt_image_t *img)
     }
     if(valid)
     {
-      d->hsm = img->profile_hsm_data;
+#if GLIB_CHECK_VERSION(2, 68, 0)
+      G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+      d->hsm = g_memdup2(img->profile_hsm_data, (size_t)count * sizeof(float));
+      G_GNUC_END_IGNORE_DEPRECATIONS
+#else
+      d->hsm = g_malloc_n(count, sizeof(float));
+      memcpy(d->hsm, img->profile_hsm_data, (size_t)count * sizeof(float));
+#endif
       d->hue_div = img->profile_hsm_hue_div;
       d->sat_div = img->profile_hsm_sat_div;
       d->val_div = img->profile_hsm_val_div;
       d->hsm_encode = img->profile_hsm_encoding;
     }
   }
+  dt_image_cache_read_release(img);
 }
 
 int legacy_params(dt_iop_module_t *self,
@@ -861,12 +876,12 @@ int process_cl(dt_iop_module_t *self,
   if(dev_coeffs == NULL) goto error;
 
   const float scale = dt_iop_get_processed_maximum(piece);
-  if(d->hsm)
-  {
-    const int len = d->hue_div * d->sat_div * d->val_div * 3;
-    dev_hsm = dt_opencl_copy_host_to_device_constant(devid, sizeof(float) * len, d->hsm);
-    if(dev_hsm == NULL) goto error;
-  }
+  const int use_hsm = d->hsm != NULL;
+  const float dummy_hsm = 0.0f;
+  const size_t len = use_hsm ? (size_t)d->hue_div * d->sat_div * d->val_div * 3 : 1;
+  dev_hsm = dt_opencl_copy_host_to_device_constant(devid, sizeof(float) * len,
+                                                  use_hsm ? d->hsm : &dummy_hsm);
+  if(dev_hsm == NULL) goto error;
 
   err = dt_opencl_enqueue_kernel_2d_args(devid, kernel, width, height,
                                          CLARG(dev_in), CLARG(dev_out),
@@ -875,7 +890,7 @@ int process_cl(dt_iop_module_t *self,
                                          CLARG(dev_g), CLARG(dev_b),
                                          CLARG(blue_mapping), CLARG(dev_coeffs), CLARG(dev_corr),
                                          CLARG(scale), CLARG(d->hue_div), CLARG(d->sat_div), CLARG(d->val_div),
-                                         CLARG(dev_hsm), CLARG(d->hsm_encode));
+                                         CLARG(dev_hsm), CLARG(d->hsm_encode), CLARG(use_hsm));
 error:
   dt_opencl_release_mem_object(dev_m);
   dt_opencl_release_mem_object(dev_l);
@@ -1434,6 +1449,7 @@ void commit_params(dt_iop_module_t *self,
   d->input = NULL;
   d->clear_input = FALSE;
   d->nrgb = NULL;
+  g_free(d->hsm);
   d->hsm = NULL;
   d->hue_div = d->sat_div = d->val_div = d->hsm_encode = 0;
 
@@ -1535,7 +1551,7 @@ void commit_params(dt_iop_module_t *self,
       // d65_color_matrix (XYZ -> camera). Do NOT invert it again.
       d->input = dt_colorspaces_create_xyzmatrix_profile((const float(*)[3])pipe->image.dng_forward_matrix);
       d->clear_input = TRUE;
-      _commit_hsm(d, &pipe->image);
+      _commit_hsm(d, pipe->image.id);
     }
     else
       type = DT_COLORSPACE_EMBEDDED_MATRIX;
@@ -1549,7 +1565,7 @@ void commit_params(dt_iop_module_t *self,
       d->clear_input = TRUE;
       if(type == DT_COLORSPACE_DNG_LOOK)
       {
-        _commit_hsm(d, &pipe->image);
+        _commit_hsm(d, pipe->image.id);
       }
     }
     else
@@ -1772,6 +1788,7 @@ void init_pipe(dt_iop_module_t *self,
   d->xform_cam_Lab = NULL;
   d->xform_cam_nrgb = NULL;
   d->xform_nrgb_Lab = NULL;
+  d->hsm = NULL;
 }
 
 void cleanup_pipe(dt_iop_module_t *self,
@@ -1796,6 +1813,7 @@ void cleanup_pipe(dt_iop_module_t *self,
     d->xform_nrgb_Lab = NULL;
   }
 
+  g_free(d->hsm);
   free(piece->data);
   piece->data = NULL;
 }

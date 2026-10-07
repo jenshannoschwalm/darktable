@@ -386,14 +386,6 @@ typedef struct dt_develop_t
   // When pinned, this holds its own image, history, iop modules, and pipeline
   gboolean preview2_pinned;                       // Whether the second window is pinned to a specific image
   struct dt_develop_t *preview2_pinned_dev;       // Separate develop for pinned image (NULL when not pinned)
-
-  // HSM (Hue-Saturation-Map) table from DNG image
-  // Deep copy owned by this develop context, valid for entire develop lifetime
-  float *hsm_data;              // Pointer to copied HSM table
-  int hsm_hue_div;
-  int hsm_sat_div;
-  int hsm_val_div;
-  int hsm_encoding;             // 0 = linear, 1 = sRGB
 } dt_develop_t;
 
 void dt_dev_init(dt_develop_t *dev, gboolean gui_attached);

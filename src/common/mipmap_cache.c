@@ -1012,7 +1012,18 @@ void dt_mipmap_cache_get_with_caller(dt_mipmap_buffer_t *buf,
         {
           // swap back new image data:
           dt_image_t *img = dt_image_cache_get(imgid, 'w');
-          g_free(img->profile_hsm_data);
+          if(buffered_image.profile_hsm_data)
+            g_free(img->profile_hsm_data);
+          else
+          {
+            // loaders that skip EXIF checks must not discard the cached table
+            buffered_image.profile_hsm_data = img->profile_hsm_data;
+            buffered_image.profile_hsm_data_size = img->profile_hsm_data_size;
+            buffered_image.profile_hsm_hue_div = img->profile_hsm_hue_div;
+            buffered_image.profile_hsm_sat_div = img->profile_hsm_sat_div;
+            buffered_image.profile_hsm_val_div = img->profile_hsm_val_div;
+            buffered_image.profile_hsm_encoding = img->profile_hsm_encoding;
+          }
           *img = buffered_image;
           img->load_status = DT_IMAGEIO_OK;
           // dt_print(DT_DEBUG_ALWAYS, "[mipmap read get] initializing full buffer img %u with %u %u -> %d %d (%p)",

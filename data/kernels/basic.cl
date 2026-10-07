@@ -1308,7 +1308,7 @@ colorin_unbound (read_only image2d_t in, write_only image2d_t out, const int wid
                  global float *cmat, global float *lmat,
                  read_only image2d_t lutr, read_only image2d_t lutg, read_only image2d_t lutb,
                  const int blue_mapping, global const float (*const a)[3], global const float *corr,
-                 const float scale, const int hue_div, const int sat_div, const int val_div, global const float *dev_hsm, const int encoding)
+                 const float scale, const int hue_div, const int sat_div, const int val_div, global const float *dev_hsm, const int encoding, const int use_hsm)
 {
   const int x = get_global_id(0);
   const int y = get_global_id(1);
@@ -1352,7 +1352,7 @@ colorin_unbound (read_only image2d_t in, write_only image2d_t out, const int wid
   }
   float4 xyz = (float4)(XYZ[0], XYZ[1], XYZ[2], 0.0f);
   pixel.xyz = XYZ_to_Lab(xyz).xyz;
-  if(dev_hsm)
+  if(use_hsm)
   {
     float4 prophoto_rgb = Lab_to_prophotorgb(pixel) / (float4)scale;
     float4 hsv = RGB_2_HSV(prophoto_rgb);
@@ -1387,7 +1387,7 @@ colorin_clipping (read_only image2d_t in, write_only image2d_t out, const int wi
                   global float *cmat, global float *lmat,
                   read_only image2d_t lutr, read_only image2d_t lutg, read_only image2d_t lutb,
                   const int blue_mapping, global const float (*const a)[3], global const float *corr,
-                  const float scale, const int hue_div, const int sat_div, const int val_div, global const float *dev_hsm, const int encoding)
+                  const float scale, const int hue_div, const int sat_div, const int val_div, global const float *dev_hsm, const int encoding, const int use_hsm)
 {
   const int x = get_global_id(0);
   const int y = get_global_id(1);
@@ -1442,7 +1442,7 @@ colorin_clipping (read_only image2d_t in, write_only image2d_t out, const int wi
 
   float4 xyz = (float4)(XYZ[0], XYZ[1], XYZ[2], 0.0f);
   pixel.xyz = XYZ_to_Lab(xyz).xyz;
-  if(dev_hsm)
+  if(use_hsm)
   {
     float4 prophoto_rgb = Lab_to_prophotorgb(pixel) / (float4)scale;
     float4 hsv = RGB_2_HSV(prophoto_rgb);

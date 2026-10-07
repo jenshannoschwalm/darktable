@@ -175,9 +175,6 @@ void dt_dev_init(dt_develop_t *dev,
   // Initialize pinned image state
   dev->preview2_pinned = FALSE;
   dev->preview2_pinned_dev = NULL;
-
-  dev->hsm_data = NULL;
-  dev->hsm_hue_div = dev->hsm_sat_div = dev->hsm_val_div = dev->hsm_encoding = 0;
 }
 
 // Shutdown and cleanup a pinned dev, waiting for any in-progress jobs
@@ -211,12 +208,6 @@ void dt_dev_cleanup(dt_develop_t *dev)
 {
   if(!dev) return;
 
-  // Free HSM copy owned by develop
-  if(dev->hsm_data)
-  {
-    g_free(dev->hsm_data);
-    dev->hsm_data = NULL;
-  }
   // image_cache does not have to be unref'd, this is done outside develop module.
 
   dt_dev_init_chroma(dev);
@@ -1043,30 +1034,6 @@ static inline void _dt_dev_load_raw(dt_develop_t *dev,
 
   const dt_image_t *image = dt_image_cache_get(imgid, 'r');
   dev->image_storage = *image;
-
-  if(dev->hsm_data)
-  {
-    g_free(dev->hsm_data);
-    dev->hsm_data = NULL;
-  }
-
-  const size_t hsm_size = image->profile_hsm_data_size;
-  dev->hsm_data = NULL;
-  dev->hsm_hue_div = dev->hsm_sat_div = dev->hsm_val_div = dev->hsm_encoding = 0;
-
-  if(image->profile_hsm_data && hsm_size > 0)
-  {
-    dev->hsm_data = (float *)g_malloc(hsm_size);
-    if(dev->hsm_data)
-    {
-      memcpy(dev->hsm_data, image->profile_hsm_data, hsm_size);
-      dev->hsm_hue_div = image->profile_hsm_hue_div;
-      dev->hsm_sat_div = image->profile_hsm_sat_div;
-      dev->hsm_val_div = image->profile_hsm_val_div;
-      dev->hsm_encoding = image->profile_hsm_encoding;
-    }
-  }
-
   dt_image_cache_read_release(image);
 
 //  dev->requested_id = (dev->image_storage.load_status == DT_IMAGEIO_OK) ? dev->image_storage.id : 0;
