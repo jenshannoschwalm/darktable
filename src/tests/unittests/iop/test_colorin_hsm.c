@@ -165,7 +165,7 @@ static void test_hsm_invalid_factors(void **state)
   cached_image = NULL;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
   const struct CMUnitTest tests[] = {
     cmocka_unit_test(test_hsm_owned_copy_and_profile_change),
